@@ -8,15 +8,12 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.content.pm.ActivityInfo;
-import android.content.pm.PackageManager;
-import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.graphics.drawable.Drawable;
 import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -31,6 +28,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.OvershootInterpolator;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
@@ -39,51 +37,39 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.File;
-import java.text.Collator;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.Comparator;
 import java.util.Date;
-import java.util.HashSet;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 /**
  * The home screen: rotating photos behind everything, a menu button top left, the time, date
- * and football scores top right, and every app in one row along the bottom.
+ * and live football top right, and every app in one row along the bottom. Hold OK (or press
+ * the ☰ button) on an app to move, hide or uninstall it.
  */
 public final class Home extends Activity {
     private static final String TAG = "MyHome";
     private static final long ROTATE_MS = 60_000;
     private static final long FADE_MS = 1800;
     private static final long WALLPAPER_REFRESH_MS = 6 * 60 * 60 * 1000L;
-    private static final long SCORES_LIVE_MS = 30_000;
+    private static final long SCORES_LIVE_MS = 20_000;
+    private static final long SCORES_SOON_MS = 60_000;
     private static final long SCORES_IDLE_MS = 5 * 60_000;
-
-    /** Apps that go first in the row, in this order; everything else follows A to Z. */
-    private static final List<String> FIRST = Arrays.asList(
-            "com.netflix.ninja", "com.amazon.firebat", "com.amazon.firetv.youtube",
-            "com.google.android.youtube.tv", "com.disney.disneyplus", "uk.co.bbc.iplayer",
-            "bbc.iplayer.android", "air.ITVMobilePlayer", "com.itv.hub", "com.channel4.ondemand",
-            "com.nowtv.nowtvapp", "com.spotify.tv.android");
-    /** Never shown as tiles: this app, Amazon's own screens (they are in the menu). */
-    private static final Set<String> HIDDEN = new HashSet<>(Arrays.asList(
-            "com.firestick.home", "tv.dumbtv.home", Guard.AMAZON, "com.amazon.tv.settings.v2",
-            "com.amazon.venezia", "com.amazon.firehomestarter"));
+    private static final int GREEN = 0xFF4ADE80;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    private final ExecutorService net = Executors.newFixedThreadPool(4);
+    private final ExecutorService scoresIo = Executors.newSingleThreadExecutor();
 
     private FrameLayout root;
     private ImageView photoBack, photoFront;
-    private TextView clock, date, caption, focusedName, scoresTitle;
-    private LinearLayout scoresList, scoresCard, row, menu;
-    private FrameLayout menuButton;
+    private TextView clock, date, focusedName;
+    private LinearLayout scoresCard, row, menu, optionsPanel;
+    private FrameLayout menuButton, options;
     private HorizontalScrollView rowScroll;
 
     private List<File> photos = new ArrayList<>();
@@ -92,6 +78,13 @@ public final class Home extends Activity {
     private long lastScores;
     private boolean resumed;
     private boolean loadingPhoto;
+
+    /** The tile being moved, or null. */
+    private View moving;
+    private final Map<String, Integer> lastState = new HashMap<>();
+    private final Map<String, Long> endedAt = new HashMap<>();
+    private final Map<String, String> lastScore = new HashMap<>();
+    private final Map<String, Bitmap> crests = java.util.Collections.synchronizedMap(new HashMap<String, Bitmap>());
 
     private final Runnable rotate = new Runnable() {
         @Override
@@ -149,12 +142,12 @@ public final class Home extends Activity {
         tick();
         ui.removeCallbacks(rotate);
         ui.postDelayed(rotate, ROTATE_MS);
-        if (SystemClock.elapsedRealtime() - lastWallpaperRefresh > WALLPAPER_REFRESH_MS
-                || lastWallpaperRefresh == 0) {
+        if (lastWallpaperRefresh == 0
+                || SystemClock.elapsedRealtime() - lastWallpaperRefresh > WALLPAPER_REFRESH_MS) {
             refreshWallpapers();
         }
         ui.removeCallbacks(scores);
-        if (SystemClock.elapsedRealtime() - lastScores > SCORES_LIVE_MS || lastScores == 0) loadScores();
+        if (lastScores == 0 || SystemClock.elapsedRealtime() - lastScores > SCORES_LIVE_MS) loadScores();
         else ui.postDelayed(scores, SCORES_LIVE_MS);
     }
 
@@ -170,6 +163,8 @@ public final class Home extends Activity {
         unregisterReceiver(time);
         ui.removeCallbacks(rotate);
         ui.removeCallbacks(scores);
+        if (moving != null) stopMoving();
+        hideOptions();
         hideMenu();
     }
 
@@ -177,33 +172,64 @@ public final class Home extends Activity {
     protected void onDestroy() {
         unregisterReceiver(packages);
         io.shutdownNow();
+        net.shutdownNow();
+        scoresIo.shutdownNow();
         super.onDestroy();
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (moving != null) stopMoving();
+        hideOptions();
         hideMenu();
         focusFirstApp();
     }
 
     @Override
     public void onBackPressed() {
-        if (menu.getVisibility() == View.VISIBLE) hideMenu();
+        if (options.getVisibility() == View.VISIBLE) hideOptions();
+        else if (menu.getVisibility() == View.VISIBLE) hideMenu();
         else focusFirstApp();
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent e) {
+        if (moving == null) return super.dispatchKeyEvent(e);
+        if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
+        switch (e.getKeyCode()) {
+            case KeyEvent.KEYCODE_DPAD_LEFT:
+                shift(-1);
+                break;
+            case KeyEvent.KEYCODE_DPAD_RIGHT:
+                shift(1);
+                break;
+            case KeyEvent.KEYCODE_DPAD_CENTER:
+            case KeyEvent.KEYCODE_ENTER:
+            case KeyEvent.KEYCODE_BACK:
+            case KeyEvent.KEYCODE_ESCAPE:
+                stopMoving();
+                break;
+            default:
+                break;
+        }
+        return true;
     }
 
     @Override
     public boolean onKeyDown(int code, KeyEvent e) {
         if (code == KeyEvent.KEYCODE_MENU) {
-            if (menu.getVisibility() == View.VISIBLE) hideMenu();
+            View f = getCurrentFocus();
+            if (options.getVisibility() == View.VISIBLE) hideOptions();
+            else if (f != null && f.getParent() == row) showOptions((Apps.App) f.getTag(), f);
+            else if (menu.getVisibility() == View.VISIBLE) hideMenu();
             else showMenu();
             return true;
         }
         return super.onKeyDown(code, e);
     }
 
-    // ---- layout ----
+    // ---- layout helpers ----
 
     private int dp(float v) {
         return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v,
@@ -227,11 +253,20 @@ public final class Home extends Activity {
         return g;
     }
 
+    private static FrameLayout.LayoutParams match() {
+        return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT);
+    }
+
+    private static LinearLayout.LayoutParams wrap() {
+        return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+    }
+
     private void build() {
         root = new FrameLayout(this);
-        GradientDrawable fallback = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[] {0xFF0F2027, 0xFF203A43, 0xFF2C5364});
-        root.setBackground(fallback);
+        root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[] {0xFF0F2027, 0xFF203A43, 0xFF2C5364}));
 
         photoBack = photoView();
         photoFront = photoView();
@@ -246,9 +281,10 @@ public final class Home extends Activity {
         root.addView(scrim, match());
 
         buildMenuButton();
-        buildMenu();
         buildClock();
         buildRow();
+        buildMenu();
+        buildOptions();
     }
 
     private ImageView photoView() {
@@ -257,10 +293,7 @@ public final class Home extends Activity {
         return v;
     }
 
-    private static FrameLayout.LayoutParams match() {
-        return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT);
-    }
+    // ---- menu button and menu ----
 
     private void buildMenuButton() {
         menuButton = new FrameLayout(this);
@@ -279,8 +312,7 @@ public final class Home extends Activity {
             if (i > 0) lp.topMargin = dp(4);
             bars.addView(bar, lp);
         }
-        menuButton.addView(bars, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT));
+        menuButton.addView(bars, match());
         menuButton.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View v, boolean has) {
@@ -305,33 +337,48 @@ public final class Home extends Activity {
         root.addView(menuButton, lp);
     }
 
+    private LinearLayout panel() {
+        LinearLayout p = new LinearLayout(this);
+        p.setOrientation(LinearLayout.VERTICAL);
+        GradientDrawable bg = rounded(0xF016181C, dp(14));
+        bg.setStroke(dp(1), 0x22FFFFFF);
+        p.setBackground(bg);
+        p.setPadding(dp(8), dp(8), dp(8), dp(8));
+        p.setElevation(dp(16));
+        return p;
+    }
+
     private void buildMenu() {
-        menu = new LinearLayout(this);
-        menu.setOrientation(LinearLayout.VERTICAL);
-        menu.setBackground(rounded(0xEE16181C, dp(14)));
-        menu.setPadding(dp(8), dp(8), dp(8), dp(8));
+        menu = panel();
         menu.setVisibility(View.GONE);
-        menu.setElevation(dp(12));
-        menuItem("Settings", new Runnable() {
+        item(menu, "Settings", new Runnable() {
             @Override
             public void run() {
                 openSettings();
             }
         });
-        menuItem("Appstore", new Runnable() {
+        item(menu, "Appstore", new Runnable() {
             @Override
             public void run() {
                 launch(getPackageManager().getLeanbackLaunchIntentForPackage("com.amazon.venezia"));
             }
         });
-        menuItem("New background photo", new Runnable() {
+        item(menu, "New background photo", new Runnable() {
             @Override
             public void run() {
                 hideMenu();
                 nextPhoto();
             }
         });
-        menuItem("Amazon home screen", new Runnable() {
+        item(menu, "Show hidden apps", new Runnable() {
+            @Override
+            public void run() {
+                hideMenu();
+                Apps.unhideAll(Home.this);
+                loadApps();
+            }
+        });
+        item(menu, "Amazon home screen", new Runnable() {
             @Override
             public void run() {
                 hideMenu();
@@ -346,7 +393,7 @@ public final class Home extends Activity {
         root.addView(menu, lp);
     }
 
-    private void menuItem(String label, final Runnable action) {
+    private void item(LinearLayout into, String label, final Runnable action) {
         final TextView t = text(17, "sans-serif-medium", Typeface.NORMAL);
         t.setShadowLayer(0, 0, 0, 0);
         t.setText(label);
@@ -367,7 +414,7 @@ public final class Home extends Activity {
                 action.run();
             }
         });
-        menu.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+        into.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
@@ -383,6 +430,168 @@ public final class Home extends Activity {
         menu.setVisibility(View.GONE);
         menuButton.requestFocus();
     }
+
+    // ---- app options (hold OK) ----
+
+    private View optionsFor;
+
+    private void buildOptions() {
+        options = new FrameLayout(this);
+        options.setBackgroundColor(0x99000000);
+        options.setVisibility(View.GONE);
+        optionsPanel = panel();
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(300),
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.CENTER;
+        options.addView(optionsPanel, lp);
+        root.addView(options, match());
+    }
+
+    private void showOptions(final Apps.App app, final View tile) {
+        if (app == null) return;
+        optionsFor = tile;
+        optionsPanel.removeAllViews();
+        TextView title = text(14, "sans-serif-medium", Typeface.NORMAL);
+        title.setShadowLayer(0, 0, 0, 0);
+        title.setTextColor(0x99FFFFFF);
+        title.setText(app.label);
+        title.setPadding(dp(16), dp(8), dp(16), dp(8));
+        optionsPanel.addView(title, wrap());
+        item(optionsPanel, "Open", new Runnable() {
+            @Override
+            public void run() {
+                hideOptions();
+                launch(new Intent(app.intent));
+            }
+        });
+        item(optionsPanel, "Move", new Runnable() {
+            @Override
+            public void run() {
+                hideOptions();
+                startMoving(tile);
+            }
+        });
+        item(optionsPanel, "Move to front", new Runnable() {
+            @Override
+            public void run() {
+                hideOptions();
+                place(tile, 0);
+            }
+        });
+        item(optionsPanel, "Move to end", new Runnable() {
+            @Override
+            public void run() {
+                hideOptions();
+                place(tile, row.getChildCount() - 1);
+            }
+        });
+        item(optionsPanel, "Hide from home", new Runnable() {
+            @Override
+            public void run() {
+                hideOptions();
+                Apps.hide(Home.this, app.pkg);
+                int i = row.indexOfChild(tile);
+                row.removeView(tile);
+                saveOrder();
+                if (row.getChildCount() > 0) row.getChildAt(Math.min(i, row.getChildCount() - 1)).requestFocus();
+                Toast.makeText(Home.this, app.label + " hidden. Menu > Show hidden apps brings it back.",
+                        Toast.LENGTH_LONG).show();
+            }
+        });
+        item(optionsPanel, "App info", new Runnable() {
+            @Override
+            public void run() {
+                hideOptions();
+                launch(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", app.pkg, null)));
+            }
+        });
+        item(optionsPanel, "Uninstall", new Runnable() {
+            @Override
+            public void run() {
+                hideOptions();
+                launch(new Intent(Intent.ACTION_DELETE, Uri.fromParts("package", app.pkg, null)));
+            }
+        });
+        options.setVisibility(View.VISIBLE);
+        options.setAlpha(0f);
+        options.animate().alpha(1f).setDuration(150).start();
+        optionsPanel.getChildAt(1).requestFocus();
+    }
+
+    private void hideOptions() {
+        if (options == null || options.getVisibility() != View.VISIBLE) return;
+        options.setVisibility(View.GONE);
+        if (optionsFor != null && optionsFor.getParent() == row) optionsFor.requestFocus();
+        else focusFirstApp();
+        optionsFor = null;
+    }
+
+    // ---- moving apps ----
+
+    private void startMoving(View tile) {
+        moving = tile;
+        tile.requestFocus();
+        styleMoving(tile, true);
+        focusedName.setText("Moving " + ((Apps.App) tile.getTag()).label + "   ◀ ▶ then OK");
+    }
+
+    private void shift(int by) {
+        int i = row.indexOfChild(moving);
+        int to = i + by;
+        if (to < 0 || to >= row.getChildCount()) return;
+        row.removeViewAt(i);
+        row.addView(moving, to);
+        moving.requestFocus();
+        styleMoving(moving, true);
+        moving.post(new Runnable() {
+            @Override
+            public void run() {
+                if (moving != null) rowScroll.requestChildRectangleOnScreen(moving,
+                        new android.graphics.Rect(-dp(60), 0, moving.getWidth() + dp(60), moving.getHeight()), false);
+            }
+        });
+    }
+
+    private void stopMoving() {
+        View t = moving;
+        moving = null;
+        styleMoving(t, false);
+        saveOrder();
+        t.requestFocus();
+        focusedName.setText(((Apps.App) t.getTag()).label);
+    }
+
+    private void styleMoving(View t, boolean on) {
+        GradientDrawable ring = (GradientDrawable) ((FrameLayout) t).getForeground();
+        ring.setStroke(dp(3), on ? GREEN : Color.WHITE);
+        t.animate().translationY(on ? -dp(14) : 0).setDuration(150).start();
+    }
+
+    /** Puts a tile at a position and keeps the new order. */
+    private void place(View tile, int to) {
+        row.removeView(tile);
+        row.addView(tile, to);
+        saveOrder();
+        tile.requestFocus();
+        rowScroll.post(new Runnable() {
+            @Override
+            public void run() {
+                View f = getCurrentFocus();
+                if (f != null && f.getParent() == row) {
+                    rowScroll.smoothScrollTo(Math.max(0, f.getLeft() - dp(48)), 0);
+                }
+            }
+        });
+    }
+
+    private void saveOrder() {
+        List<String> pkgs = new ArrayList<>();
+        for (int i = 0; i < row.getChildCount(); i++) pkgs.add(((Apps.App) row.getChildAt(i).getTag()).pkg);
+        Apps.saveOrder(this, pkgs);
+    }
+
+    // ---- clock and scores ----
 
     private void buildClock() {
         LinearLayout box = new LinearLayout(this);
@@ -401,19 +610,14 @@ public final class Home extends Activity {
 
         scoresCard = new LinearLayout(this);
         scoresCard.setOrientation(LinearLayout.VERTICAL);
-        scoresCard.setBackground(rounded(0x66000000, dp(14)));
-        scoresCard.setPadding(dp(14), dp(10), dp(14), dp(10));
+        GradientDrawable bg = rounded(0x8C0B0D10, dp(16));
+        bg.setStroke(dp(1), 0x26FFFFFF);
+        scoresCard.setBackground(bg);
+        scoresCard.setPadding(dp(16), dp(12), dp(16), dp(12));
         scoresCard.setVisibility(View.GONE);
-        scoresTitle = text(11, "sans-serif-medium", Typeface.NORMAL);
-        scoresTitle.setLetterSpacing(0.12f);
-        scoresTitle.setTextColor(0xCCFFFFFF);
-        scoresCard.addView(scoresTitle, wrap());
-        scoresList = new LinearLayout(this);
-        scoresList.setOrientation(LinearLayout.VERTICAL);
-        scoresCard.addView(scoresList, wrap());
-        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(300),
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(392),
                 ViewGroup.LayoutParams.WRAP_CONTENT);
-        sl.topMargin = dp(16);
+        sl.topMargin = dp(18);
         box.addView(scoresCard, sl);
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -424,10 +628,226 @@ public final class Home extends Activity {
         root.addView(box, lp);
     }
 
-    private static LinearLayout.LayoutParams wrap() {
-        return new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
+    private void tick() {
+        Date now = new Date();
+        clock.setText(DateFormat.format(DateFormat.is24HourFormat(this) ? "HH:mm" : "h:mm", now));
+        date.setText(DateFormat.format("EEEE d MMMM", now));
     }
+
+    private void loadScores() {
+        lastScores = SystemClock.elapsedRealtime();
+        final Context app = getApplicationContext();
+        final int crestPx = dp(22);
+        scoresIo.execute(new Runnable() {
+            @Override
+            public void run() {
+                final List<Scores.Match> all = Scores.fetch(net);
+                final Map<String, Bitmap> fresh = new HashMap<>();
+                List<Scores.Match> picked = null;
+                if (all != null) {
+                    long now = System.currentTimeMillis();
+                    synchronized (lastState) {
+                        for (Scores.Match m : all) {
+                            Integer before = lastState.get(m.id);
+                            if (m.state == Scores.DONE && before != null && before != Scores.DONE
+                                    && !endedAt.containsKey(m.id)) {
+                                endedAt.put(m.id, now);
+                            }
+                            lastState.put(m.id, m.state);
+                        }
+                        picked = Scores.relevant(all, endedAt, now);
+                    }
+                    for (Scores.Match m : picked) {
+                        for (String url : new String[] {m.homeLogo, m.awayLogo}) {
+                            if (url == null || url.isEmpty() || crests.containsKey(url) || fresh.containsKey(url)) continue;
+                            Bitmap b = Scores.crest(app, url, crestPx);
+                            if (b != null) fresh.put(url, b);
+                        }
+                    }
+                }
+                final List<Scores.Match> show = picked;
+                ui.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        crests.putAll(fresh);
+                        if (show != null) showScores(show);
+                        if (resumed) {
+                            long now = System.currentTimeMillis();
+                            long next = show == null ? SCORES_SOON_MS
+                                    : Scores.anyLive(show) ? SCORES_LIVE_MS
+                                    : Scores.anyImminent(show, now) ? SCORES_SOON_MS : SCORES_IDLE_MS;
+                            ui.removeCallbacks(scores);
+                            ui.postDelayed(scores, next);
+                        }
+                    }
+                });
+            }
+        });
+    }
+
+    private void showScores(List<Scores.Match> ms) {
+        scoresCard.removeAllViews();
+        if (ms.isEmpty()) {
+            scoresCard.setVisibility(View.GONE);
+            return;
+        }
+        int shown = 0;
+        String group = null;
+        for (Scores.Match m : ms) {
+            if (shown == 6) break;
+            String heading = m.competition + (m.state == Scores.LIVE ? "|live" : m.state == Scores.DONE ? "|ft" : "|soon");
+            if (!heading.equals(group)) {
+                group = heading;
+                scoresCard.addView(header(m, shown == 0));
+            }
+            scoresCard.addView(scoreRow(m));
+            shown++;
+        }
+        scoresCard.setVisibility(View.VISIBLE);
+    }
+
+    private View header(Scores.Match m, boolean first) {
+        LinearLayout h = new LinearLayout(this);
+        h.setOrientation(LinearLayout.HORIZONTAL);
+        h.setGravity(Gravity.CENTER_VERTICAL);
+        h.setPadding(0, first ? 0 : dp(10), 0, dp(4));
+        TextView name = text(11, "sans-serif-medium", Typeface.NORMAL);
+        name.setShadowLayer(0, 0, 0, 0);
+        name.setLetterSpacing(0.14f);
+        name.setTextColor(0xB3FFFFFF);
+        name.setText(m.competition.toUpperCase());
+        h.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView tag = text(10, "sans-serif-medium", Typeface.BOLD);
+        tag.setShadowLayer(0, 0, 0, 0);
+        tag.setLetterSpacing(0.1f);
+        tag.setPadding(dp(7), dp(3), dp(7), dp(3));
+        if (m.state == Scores.LIVE) {
+            tag.setText("● LIVE");
+            tag.setTextColor(Color.BLACK);
+            tag.setBackground(rounded(GREEN, dp(8)));
+            pulse(tag);
+        } else if (m.state == Scores.DONE) {
+            tag.setText("FULL TIME");
+            tag.setTextColor(0xCCFFFFFF);
+            tag.setBackground(rounded(0x33FFFFFF, dp(8)));
+        } else {
+            tag.setText("STARTING SOON");
+            tag.setTextColor(0xCCFFFFFF);
+            tag.setBackground(rounded(0x33FFFFFF, dp(8)));
+        }
+        h.addView(tag, wrap());
+        return h;
+    }
+
+    private void pulse(final View v) {
+        v.animate().alpha(0.55f).setDuration(900).withEndAction(new Runnable() {
+            @Override
+            public void run() {
+                if (v.getParent() == null) return;
+                v.animate().alpha(1f).setDuration(900).withEndAction(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (v.getParent() != null) pulse(v);
+                    }
+                }).start();
+            }
+        }).start();
+    }
+
+    private View scoreRow(Scores.Match m) {
+        LinearLayout r = new LinearLayout(this);
+        r.setOrientation(LinearLayout.HORIZONTAL);
+        r.setGravity(Gravity.CENTER_VERTICAL);
+        r.setPadding(0, dp(5), 0, dp(5));
+
+        TextView home = team(m.home, Gravity.END);
+        r.addView(home, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        r.addView(crest(m.homeLogo, true));
+
+        TextView mid = text(15, "sans-serif-medium", Typeface.BOLD);
+        mid.setShadowLayer(0, 0, 0, 0);
+        mid.setGravity(Gravity.CENTER);
+        mid.setPadding(0, dp(4), 0, dp(4));
+        if (m.state == Scores.PRE) {
+            mid.setText(DateFormat.format(DateFormat.is24HourFormat(this) ? "HH:mm" : "h:mm", m.kickoff));
+            mid.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
+            mid.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+            mid.setBackground(rounded(0x26FFFFFF, dp(8)));
+        } else {
+            mid.setText(m.homeScore + "  " + m.awayScore);
+            mid.setTextColor(m.state == Scores.LIVE ? Color.BLACK : Color.WHITE);
+            mid.setBackground(rounded(m.state == Scores.LIVE ? Color.WHITE : 0x33FFFFFF, dp(8)));
+            String score = m.homeScore + "-" + m.awayScore;
+            String before = lastScore.put(m.id, score);
+            if (before != null && !before.equals(score)) goal(mid);
+        }
+        LinearLayout.LayoutParams ml = new LinearLayout.LayoutParams(dp(62), ViewGroup.LayoutParams.WRAP_CONTENT);
+        ml.leftMargin = dp(8);
+        ml.rightMargin = dp(8);
+        r.addView(mid, ml);
+
+        r.addView(crest(m.awayLogo, false));
+        TextView away = team(m.away, Gravity.START);
+        r.addView(away, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        TextView status = text(12, "sans-serif-medium", Typeface.NORMAL);
+        status.setShadowLayer(0, 0, 0, 0);
+        status.setGravity(Gravity.END);
+        if (m.state == Scores.LIVE) {
+            status.setText(m.detail);
+            status.setTextColor(GREEN);
+        } else if (m.state == Scores.DONE) {
+            status.setText("FT");
+            status.setTextColor(0x99FFFFFF);
+        } else {
+            long mins = Math.max(0, (m.kickoff - System.currentTimeMillis()) / 60000);
+            status.setText(mins < 60 ? mins + "m" : (mins / 60) + "h " + (mins % 60) + "m");
+            status.setTextColor(0x99FFFFFF);
+        }
+        r.addView(status, new LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT));
+        return r;
+    }
+
+    private TextView team(String name, int gravity) {
+        TextView t = text(14, "sans-serif", Typeface.NORMAL);
+        t.setShadowLayer(0, 0, 0, 0);
+        t.setText(name);
+        t.setGravity(gravity | Gravity.CENTER_VERTICAL);
+        t.setSingleLine(true);
+        t.setEllipsize(TextUtils.TruncateAt.END);
+        return t;
+    }
+
+    private View crest(String url, boolean home) {
+        ImageView v = new ImageView(this);
+        v.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        Bitmap b = url == null ? null : crests.get(url);
+        if (b != null) v.setImageBitmap(b);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(b != null ? dp(22) : 0, dp(22));
+        if (b != null) {
+            if (home) lp.leftMargin = dp(8);
+            else lp.rightMargin = dp(8);
+        }
+        v.setLayoutParams(lp);
+        return v;
+    }
+
+    /** A goal: the score pill pops and flashes green. */
+    private void goal(final TextView pill) {
+        pill.setBackground(rounded(GREEN, dp(8)));
+        pill.setScaleX(1.5f);
+        pill.setScaleY(1.5f);
+        pill.animate().scaleX(1f).scaleY(1f).setDuration(700).setInterpolator(new OvershootInterpolator(3f))
+                .start();
+        ui.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                pill.setBackground(rounded(Color.WHITE, dp(8)));
+            }
+        }, 8000);
+    }
+
+    // ---- apps ----
 
     private void buildRow() {
         LinearLayout bottom = new LinearLayout(this);
@@ -449,69 +869,25 @@ public final class Home extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setClipChildren(false);
         row.setClipToPadding(false);
-        row.setPadding(dp(48), dp(18), dp(48), dp(18));
+        row.setPadding(dp(48), dp(22), dp(26), dp(22));
         rowScroll.addView(row, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         bottom.addView(rowScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        caption = text(11, "sans-serif", Typeface.NORMAL);
-        caption.setTextColor(0x99FFFFFF);
-        caption.setSingleLine(true);
-        caption.setEllipsize(TextUtils.TruncateAt.END);
-        caption.setGravity(Gravity.CENTER_HORIZONTAL);
-        LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        cl.leftMargin = dp(48);
-        cl.rightMargin = dp(48);
-        bottom.addView(caption, cl);
-
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.gravity = Gravity.BOTTOM;
-        lp.bottomMargin = dp(18);
+        lp.bottomMargin = dp(24);
         root.addView(bottom, lp);
     }
 
-    // ---- clock ----
-
-    private void tick() {
-        Date now = new Date();
-        clock.setText(DateFormat.format(DateFormat.is24HourFormat(this) ? "HH:mm" : "h:mm", now));
-        date.setText(DateFormat.format("EEEE d MMMM", now));
-    }
-
-    // ---- apps ----
-
-    private static final class App {
-        String pkg;
-        CharSequence label;
-        Intent intent;
-        Drawable banner, icon;
-    }
-
     private void loadApps() {
-        final PackageManager pm = getPackageManager();
+        final Context app = getApplicationContext();
         io.execute(new Runnable() {
             @Override
             public void run() {
-                Map<String, App> found = new LinkedHashMap<>();
-                collect(pm, found, Intent.CATEGORY_LEANBACK_LAUNCHER);
-                collect(pm, found, Intent.CATEGORY_LAUNCHER);
-                final List<App> apps = new ArrayList<>(found.values());
-                final Collator collator = Collator.getInstance();
-                Collections.sort(apps, new Comparator<App>() {
-                    @Override
-                    public int compare(App a, App b) {
-                        int ia = FIRST.indexOf(a.pkg), ib = FIRST.indexOf(b.pkg);
-                        if (ia >= 0 || ib >= 0) {
-                            if (ia < 0) return 1;
-                            if (ib < 0) return -1;
-                            return ia - ib;
-                        }
-                        return collator.compare(a.label.toString(), b.label.toString());
-                    }
-                });
+                final List<Apps.App> apps = Apps.load(app);
                 ui.post(new Runnable() {
                     @Override
                     public void run() {
@@ -522,45 +898,41 @@ public final class Home extends Activity {
         });
     }
 
-    private static void collect(PackageManager pm, Map<String, App> found, String category) {
-        Intent query = new Intent(Intent.ACTION_MAIN).addCategory(category);
-        for (ResolveInfo ri : pm.queryIntentActivities(query, 0)) {
-            ActivityInfo ai = ri.activityInfo;
-            if (HIDDEN.contains(ai.packageName) || found.containsKey(ai.packageName)) continue;
-            App a = new App();
-            a.pkg = ai.packageName;
-            a.label = ri.loadLabel(pm);
-            a.intent = new Intent(Intent.ACTION_MAIN).addCategory(category)
-                    .setClassName(ai.packageName, ai.name);
-            a.banner = ai.loadBanner(pm);
-            if (a.banner == null) a.icon = ai.loadIcon(pm);
-            found.put(a.pkg, a);
-        }
-    }
-
-    private void showApps(List<App> apps) {
-        boolean hadFocus = row.hasFocus();
+    private void showApps(List<Apps.App> apps) {
+        if (moving != null) return; // never pull the row out from under a move
+        String focused = null;
+        View f = getCurrentFocus();
+        if (f != null && f.getParent() == row) focused = ((Apps.App) f.getTag()).pkg;
         row.removeAllViews();
-        for (int i = 0; i < apps.size(); i++) row.addView(tile(apps.get(i), i == 0));
-        if (row.getChildCount() > 0) {
-            menuButton.setNextFocusDownId(row.getChildAt(0).getId());
-            menuButton.setNextFocusRightId(row.getChildAt(0).getId());
-            if (hadFocus || getCurrentFocus() == null || getCurrentFocus() == menuButton) focusFirstApp();
+        View again = null;
+        for (Apps.App a : apps) {
+            View t = tile(a);
+            row.addView(t);
+            if (a.pkg.equals(focused)) again = t;
+        }
+        if (row.getChildCount() == 0) return;
+        menuButton.setNextFocusDownId(row.getChildAt(0).getId());
+        menuButton.setNextFocusRightId(row.getChildAt(0).getId());
+        if (again != null) again.requestFocus();
+        else if (getCurrentFocus() == null || getCurrentFocus() == menuButton || f != null && f.getParent() == null) {
+            focusFirstApp();
         }
     }
 
-    private View tile(final App app, boolean first) {
+    private View tile(final Apps.App app) {
         final FrameLayout t = new FrameLayout(this);
         t.setId(View.generateViewId());
+        t.setTag(app);
         t.setFocusable(true);
         t.setClipToOutline(true);
-        t.setBackground(rounded(0xDD202226, dp(10)));
-        final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(10));
+        t.setBackground(rounded(app.color, dp(12)));
+        final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(12));
         t.setForeground(ring);
         t.setNextFocusUpId(menuButton.getId());
 
         if (app.banner != null) {
-            // Banners are 16:9 like the tile; FIT_CENTER never stretches one that is not.
+            // FIT_CENTER keeps the banner's own proportions; the tile colour comes from the
+            // banner's edges, so one that does not fill the tile still looks seamless.
             ImageView img = new ImageView(this);
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             img.setImageDrawable(app.banner);
@@ -572,18 +944,17 @@ public final class Home extends Activity {
             ImageView img = new ImageView(this);
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             img.setImageDrawable(app.icon);
-            col.addView(img, new LinearLayout.LayoutParams(dp(44), dp(44)));
+            col.addView(img, new LinearLayout.LayoutParams(dp(48), dp(48)));
             TextView name = text(12, "sans-serif-medium", Typeface.NORMAL);
-            name.setShadowLayer(0, 0, 0, 0);
             name.setText(app.label);
             name.setSingleLine(true);
             name.setEllipsize(TextUtils.TruncateAt.END);
             name.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams nl = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            nl.topMargin = dp(6);
-            nl.leftMargin = dp(8);
-            nl.rightMargin = dp(8);
+            nl.topMargin = dp(7);
+            nl.leftMargin = dp(10);
+            nl.rightMargin = dp(10);
             col.addView(name, nl);
             t.addView(col, match());
         }
@@ -591,11 +962,12 @@ public final class Home extends Activity {
         t.setOnFocusChangeListener(new View.OnFocusChangeListener() {
             @Override
             public void onFocusChange(View v, boolean has) {
+                if (v == moving) return;
                 ring.setStroke(has ? dp(3) : 0, Color.WHITE);
                 v.setElevation(has ? dp(10) : 0);
                 v.animate().scaleX(has ? 1.12f : 1f).scaleY(has ? 1.12f : 1f).setDuration(160)
                         .setInterpolator(new DecelerateInterpolator()).start();
-                if (has) focusedName.setText(app.label);
+                if (has && moving == null) focusedName.setText(app.label);
             }
         });
         t.setOnClickListener(new View.OnClickListener() {
@@ -604,8 +976,15 @@ public final class Home extends Activity {
                 launch(new Intent(app.intent));
             }
         });
+        t.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                showOptions(app, v);
+                return true;
+            }
+        });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(176), dp(99));
-        if (!first) lp.leftMargin = dp(22);
+        lp.rightMargin = dp(22);
         t.setLayoutParams(lp);
         return t;
     }
@@ -673,7 +1052,6 @@ public final class Home extends Activity {
             @Override
             public void run() {
                 final Bitmap b = decode(f, Math.max(w, 1280));
-                final String text = Wallpapers.caption(f);
                 ui.post(new Runnable() {
                     @Override
                     public void run() {
@@ -683,7 +1061,7 @@ public final class Home extends Activity {
                             photos.remove(f);
                             return;
                         }
-                        crossfade(b, text);
+                        crossfade(b);
                     }
                 });
             }
@@ -707,7 +1085,7 @@ public final class Home extends Activity {
         }
     }
 
-    private void crossfade(final Bitmap b, final String text) {
+    private void crossfade(final Bitmap b) {
         photoFront.animate().cancel();
         photoFront.setImageBitmap(b);
         photoFront.setAlpha(0f);
@@ -722,105 +1100,5 @@ public final class Home extends Activity {
                         photoFront.setImageDrawable(null);
                     }
                 }).start();
-        caption.animate().alpha(0f).setDuration(FADE_MS / 2).withEndAction(new Runnable() {
-            @Override
-            public void run() {
-                caption.setText(text);
-                caption.animate().alpha(1f).setDuration(FADE_MS / 2).start();
-            }
-        }).start();
-    }
-
-    // ---- football ----
-
-    private void loadScores() {
-        lastScores = SystemClock.elapsedRealtime();
-        io.execute(new Runnable() {
-            @Override
-            public void run() {
-                List<Scores.Match> all;
-                try {
-                    all = Scores.fetch();
-                } catch (Exception e) {
-                    Log.w(TAG, "scores failed", e);
-                    all = null;
-                }
-                final List<Scores.Match> picked = all == null ? null : Scores.pick(all);
-                ui.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        showScores(picked);
-                        if (resumed) {
-                            ui.removeCallbacks(scores);
-                            boolean live = picked != null && Scores.anyLive(picked);
-                            ui.postDelayed(scores, live ? SCORES_LIVE_MS : SCORES_IDLE_MS);
-                        }
-                    }
-                });
-            }
-        });
-    }
-
-    private void showScores(List<Scores.Match> ms) {
-        if (ms == null) return; // keep the last scores on a network hiccup
-        scoresList.removeAllViews();
-        if (ms.isEmpty()) {
-            scoresCard.setVisibility(View.GONE);
-            return;
-        }
-        boolean live = Scores.anyLive(ms);
-        boolean upcoming = true;
-        for (Scores.Match m : ms) if (m.state != Scores.PRE) upcoming = false;
-        String head = Scores.LEAGUE_NAME.toUpperCase();
-        scoresTitle.setText(live ? head + "  ● LIVE" : upcoming ? head + "  · NEXT UP" : head);
-        for (Scores.Match m : ms) scoresList.addView(scoreRow(m));
-        scoresCard.setVisibility(View.VISIBLE);
-    }
-
-    private View scoreRow(Scores.Match m) {
-        LinearLayout r = new LinearLayout(this);
-        r.setOrientation(LinearLayout.HORIZONTAL);
-        r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(0, dp(7), 0, 0);
-
-        TextView home = text(14, "sans-serif", Typeface.NORMAL);
-        home.setText(m.home);
-        home.setGravity(Gravity.END);
-        home.setSingleLine(true);
-        home.setEllipsize(TextUtils.TruncateAt.END);
-        r.addView(home, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-
-        TextView mid = text(14, "sans-serif-medium", Typeface.BOLD);
-        mid.setGravity(Gravity.CENTER);
-        if (m.state == Scores.PRE) {
-            boolean today = DateFormat.format("yyyyMMdd", m.kickoff).toString()
-                    .equals(DateFormat.format("yyyyMMdd", System.currentTimeMillis()).toString());
-            mid.setText(DateFormat.format(today ? "HH:mm" : "EEE HH:mm", m.kickoff));
-            mid.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            mid.setTextColor(0xDDFFFFFF);
-        } else {
-            mid.setText(m.homeScore + " - " + m.awayScore);
-        }
-        r.addView(mid, new LinearLayout.LayoutParams(dp(m.state == Scores.PRE ? 80 : 56),
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-
-        TextView away = text(14, "sans-serif", Typeface.NORMAL);
-        away.setText(m.away);
-        away.setSingleLine(true);
-        away.setEllipsize(TextUtils.TruncateAt.END);
-        r.addView(away, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
-
-        TextView status = text(11, "sans-serif-medium", Typeface.NORMAL);
-        status.setGravity(Gravity.END);
-        if (m.state == Scores.LIVE) {
-            status.setText(m.detail);
-            status.setTextColor(0xFF4ADE80);
-        } else if (m.state == Scores.DONE) {
-            status.setText("FT");
-            status.setTextColor(0x99FFFFFF);
-        }
-        r.addView(status, new LinearLayout.LayoutParams(dp(m.state == Scores.PRE ? 0 : 40),
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        return r;
     }
 }

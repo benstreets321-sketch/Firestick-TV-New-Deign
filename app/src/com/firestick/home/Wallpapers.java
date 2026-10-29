@@ -7,10 +7,6 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -65,21 +61,6 @@ final class Wallpapers {
         }
     }
 
-    /** The photo's description from Bing, or "" for the owner's own pictures. */
-    static String caption(File f) {
-        File t = new File(f.getPath() + ".txt");
-        if (!t.isFile()) return "";
-        try {
-            byte[] b = new byte[(int) Math.min(t.length(), 4096)];
-            try (java.io.FileInputStream in = new java.io.FileInputStream(t)) {
-                int n = in.read(b);
-                return n <= 0 ? "" : new String(b, 0, n, StandardCharsets.UTF_8).trim();
-            }
-        } catch (IOException e) {
-            return "";
-        }
-    }
-
     /** Downloads new photos of the day. Network: call off the UI thread. */
     static void refresh(Context c) {
         File d = dir(c);
@@ -95,13 +76,7 @@ final class Wallpapers {
                             .replaceAll("[^A-Za-z0-9._-]", "_");
                     if (name.isEmpty() || !seen.add(name)) continue;
                     File f = new File(d, name + ".jpg");
-                    if (!f.isFile()) {
-                        Net.file("https://www.bing.com" + base + "_1920x1080.jpg", f);
-                        String text = img.optString("copyright");
-                        try (OutputStream out = new FileOutputStream(new File(f.getPath() + ".txt"))) {
-                            out.write(text.getBytes(StandardCharsets.UTF_8));
-                        }
-                    }
+                    if (!f.isFile()) Net.file("https://www.bing.com" + base + "_1920x1080.jpg", f);
                 }
             } catch (Exception e) {
                 Log.w(TAG, "wallpaper feed failed: " + feed, e);
@@ -124,9 +99,6 @@ final class Wallpapers {
                 return Long.compare(b.lastModified(), a.lastModified());
             }
         });
-        for (int i = KEEP; i < sorted.length; i++) {
-            sorted[i].delete();
-            new File(sorted[i].getPath() + ".txt").delete();
-        }
+        for (int i = KEEP; i < sorted.length; i++) sorted[i].delete();
     }
 }
