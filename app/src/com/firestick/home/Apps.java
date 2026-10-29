@@ -45,7 +45,14 @@ final class Apps {
 
     /** Apps drawn with a plain red play button instead of their own artwork (SmartTube's builds). */
     private static final Set<String> PLAY_BUTTON = new HashSet<>(Arrays.asList(
-            "com.teamsmart.videomanager.tv", "com.liskovsoft.smarttubetv.beta", "com.liskovsoft.smarttubetv"));
+            "com.teamsmart.videomanager.tv", "com.liskovsoft.smarttubetv.beta", "com.liskovsoft.smarttubetv",
+            "org.smarttube.stable", "org.smarttube.beta"));
+
+    /** SmartTube by package (its builds have used several names over time) or by its name. */
+    private static boolean playButton(App a) {
+        return PLAY_BUTTON.contains(a.pkg) || a.pkg.contains("smarttube")
+                || a.label != null && a.label.toString().toLowerCase(java.util.Locale.ROOT).contains("smarttube");
+    }
 
     static final class App {
         String pkg;
@@ -87,7 +94,7 @@ final class Apps {
             }
         });
         for (App a : apps) {
-            if (PLAY_BUTTON.contains(a.pkg)) {
+            if (playButton(a)) {
                 a.art = playButton();
                 a.color = 0xFFD7141F;
                 if (a.banner == null) a.banner = a.icon; // drawn as a banner tile
