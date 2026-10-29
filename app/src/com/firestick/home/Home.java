@@ -1119,7 +1119,7 @@ public class Home extends Activity {
         final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(9));
         t.setForeground(ring);
 
-        if (app.banner != null) {
+        if (app.wide) {
             // FIT_CENTER keeps the artwork's own proportions. A banner whose logo was trimmed out
             // of empty margins gets breathing room; the tile colour is the banner's background.
             ImageView img = new ImageView(this);

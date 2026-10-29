@@ -66,6 +66,8 @@ final class Apps {
         Bitmap art;
         /** The banner was a small logo in empty space; it gets breathing room in its tile. */
         boolean trimmed;
+        /** Shown as a wide banner tile (else as an icon with its name). */
+        boolean wide;
         /** The tile's colour, taken from the edges of the app's own artwork. */
         int color;
     }
@@ -111,21 +113,38 @@ final class Apps {
         int tileW = Math.round(TILE_W_DP * density * 1.15f), tileH = Math.round(TILE_H_DP * density * 1.15f);
         int iconPx = Math.round(ICON_DP * density * 1.15f);
         for (App a : apps) {
-            if (playButton(a)) {
-                a.art = shrink(playButton(), tileW, tileH);
-                a.color = 0xFFD7141F;
-                if (a.banner == null) a.banner = a.icon; // drawn as a banner tile
-            } else if (a.banner != null) {
-                banner(a);
-                boolean trimmed = a.art != null && a.art.getWidth() < ART_W * 0.9f;
-                a.trimmed = trimmed;
-                a.art = shrink(a.art, trimmed ? tileW * 4 / 5 : tileW, trimmed ? tileH * 3 / 4 : tileH);
-            } else {
-                a.color = edgeColor(a.icon, false);
-                a.art = shrink(trim(render(a.icon, 288, 288), Color.TRANSPARENT, 0.06f), iconPx, iconPx);
+            try {
+                art(a, tileW, tileH, iconPx);
+            } catch (Throwable e) {
+                // One app's artwork must never take the whole home screen down.
+                a.art = null;
+                a.color = 0xFF2A2D33;
+            }
+            a.wide = a.banner != null;
+            if (a.art != null) {
+                // The tile draws the prepared bitmap; drop the big originals to save memory.
+                a.banner = null;
+                a.icon = null;
             }
         }
         return apps;
+    }
+
+    /** Prepares one app's tile artwork at its on-screen size. */
+    private static void art(App a, int tileW, int tileH, int iconPx) {
+        if (playButton(a)) {
+            a.art = shrink(playButton(), tileW, tileH);
+            a.color = 0xFFD7141F;
+            if (a.banner == null) a.banner = a.icon; // drawn as a banner tile
+        } else if (a.banner != null) {
+            banner(a);
+            boolean trimmed = a.art != null && a.art.getWidth() < ART_W * 0.9f;
+            a.trimmed = trimmed;
+            a.art = shrink(a.art, trimmed ? tileW * 4 / 5 : tileW, trimmed ? tileH * 3 / 4 : tileH);
+        } else {
+            a.color = edgeColor(a.icon, false);
+            a.art = shrink(trim(render(a.icon, 288, 288), Color.TRANSPARENT, 0.06f), iconPx, iconPx);
+        }
     }
 
     /** Listed packages first, in list order; 0 when neither or both are unlisted. */
@@ -163,13 +182,20 @@ final class Apps {
         if (id != 0) {
             try {
                 android.content.res.Resources r = pm.getResourcesForApplication(ai.applicationInfo);
-                Drawable d = r.getDrawableForDensity(id, android.util.DisplayMetrics.DENSITY_XXXHIGH, null);
+                // Older sticks have little memory per app: one step down there is still sharp.
+                int density = Keeper.legacy() ? android.util.DisplayMetrics.DENSITY_XXHIGH
+                        : android.util.DisplayMetrics.DENSITY_XXXHIGH;
+                Drawable d = r.getDrawableForDensity(id, density, null);
                 if (d != null) return d;
-            } catch (Exception ignored) {
-                // fall through to the standard lookup
+            } catch (Throwable ignored) {
+                // Out of memory or a resource that will not load: use the standard version.
             }
         }
-        return banner ? ai.loadBanner(pm) : ai.loadIcon(pm);
+        try {
+            return banner ? ai.loadBanner(pm) : ai.loadIcon(pm);
+        } catch (Throwable e) {
+            return null;
+        }
     }
 
     /**
