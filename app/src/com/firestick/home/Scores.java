@@ -48,6 +48,8 @@ final class Scores {
     /** Results stay up this long after kick-off (about a day after the final whistle). */
     static final long RESULTS_MS = 26 * 60 * 60 * 1000L;
 
+    static final long DAY_MS = 24 * 60 * 60 * 1000L;
+
     static final int PRE = 0, LIVE = 1, DONE = 2;
 
     static final class Match {
@@ -58,8 +60,8 @@ final class Scores {
 
     private Scores() {}
 
-    /** Every competition at once. Network: call off the UI thread. */
-    static List<Match> fetch(ExecutorService pool) {
+    /** Every competition at once, for games kicking off between the two times. Network: off the UI thread. */
+    static List<Match> fetch(ExecutorService pool, final long from, final long to) {
         List<Future<List<Match>>> jobs = new ArrayList<>();
         for (int i = 0; i < COMPETITIONS.length; i++) {
             final String id = COMPETITIONS[i][0], name = COMPETITIONS[i][1], tag = COMPETITIONS[i][2];
@@ -67,7 +69,7 @@ final class Scores {
             jobs.add(pool.submit(new Callable<List<Match>>() {
                 @Override
                 public List<Match> call() throws Exception {
-                    return fetch(id, name, tag, order);
+                    return fetch(id, name, tag, order, from, to);
                 }
             }));
         }
@@ -85,11 +87,11 @@ final class Scores {
         return out;
     }
 
-    private static List<Match> fetch(String league, String name, String tag, int order) throws Exception {
-        // Yesterday to three days ahead, in ESPN's date range form; the exact window is applied later.
+    private static List<Match> fetch(String league, String name, String tag, int order, long from, long to)
+            throws Exception {
+        // ESPN's date range form, a day wider each side for time zones; the exact window is applied later.
         SimpleDateFormat day = new SimpleDateFormat("yyyyMMdd", Locale.ROOT);
-        long now = System.currentTimeMillis();
-        String range = day.format(now - 36 * 60 * 60 * 1000L) + "-" + day.format(now + 72 * 60 * 60 * 1000L);
+        String range = day.format(from - DAY_MS) + "-" + day.format(to + DAY_MS);
         String url = "https://site.api.espn.com/apis/site/v2/sports/soccer/" + league
                 + "/scoreboard?limit=200&dates=" + range;
         String body;
