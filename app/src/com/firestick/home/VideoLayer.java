@@ -56,6 +56,25 @@ final class VideoLayer implements SurfaceHolder.Callback {
         return c.getSharedPreferences("look", Context.MODE_PRIVATE);
     }
 
+    /**
+     * Whether this stick can decode HEVC (H.265). Older Fire TV Sticks cannot; they get the
+     * 1080p H.264 versions instead, whatever the menu says.
+     */
+    private static final boolean HEVC = hasDecoder("video/hevc");
+
+    private static boolean hasDecoder(String mime) {
+        try {
+            for (android.media.MediaCodecInfo info
+                    : new android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).getCodecInfos()) {
+                if (info.isEncoder()) continue;
+                for (String t : info.getSupportedTypes()) if (t.equalsIgnoreCase(mime)) return true;
+            }
+        } catch (RuntimeException ignored) {
+            // assume the common case
+        }
+        return true;
+    }
+
     /** Shared by the home screen and the screensaver, and kept while the app runs. */
     private static Bitmap lastFrame;
     private static Aerials.Video lastVideo;
@@ -221,7 +240,7 @@ final class VideoLayer implements SurfaceHolder.Callback {
 
     private void play(Aerials.Video resume, final int position) {
         release();
-        final Aerials.Video v = resume != null ? resume : Aerials.next(context);
+        final Aerials.Video v = resume != null ? resume : Aerials.next(context, !HEVC);
         if (v == null) {
             listener.onFailed();
             return;
@@ -230,7 +249,7 @@ final class VideoLayer implements SurfaceHolder.Callback {
         final MediaPlayer p = new MediaPlayer();
         player = p;
         try {
-            p.setDataSource(uhd ? v.uhd : v.hd);
+            p.setDataSource(!HEVC ? v.h264 : uhd ? v.uhd : v.hd);
             p.setDisplay(surface.getHolder());
             p.setVolume(0f, 0f);
             p.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {

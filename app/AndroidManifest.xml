@@ -9,6 +9,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- The Uninstall option on an app; Android still asks the owner to confirm. -->
     <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <!-- Fire OS 6 only: the Keeper reads the foreground app through UsageStats and moves the
+         home task to the front; capped so Fire OS 7 and 8 see none of these. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        android:maxSdkVersion="27" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"
+        android:maxSdkVersion="27" />
+    <uses-permission android:name="android.permission.REORDER_TASKS"
+        android:maxSdkVersion="27" />
 
     <application
         android:label="@string/app_name"
@@ -59,6 +67,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </service>
+
+        <!-- Fire OS 6: keeps My Home in front of Amazon's home screen (see Keeper). -->
+        <service
+            android:name=".Keeper"
+            android:exported="false" />
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Fire OS keeps HOME on Amazon's launcher; this service sends it here instead. -->
         <service

@@ -130,6 +130,7 @@ public final class Home extends Activity {
         pf.addAction(Intent.ACTION_PACKAGE_CHANGED);
         pf.addDataScheme("package");
         registerReceiver(packages, pf);
+        Keeper.start(this);
         loadApps();
         photos = Wallpapers.all(this);
         nextPhoto();

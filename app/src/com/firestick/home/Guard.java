@@ -96,6 +96,7 @@ public final class Guard extends AccessibilityService {
     /** Opens Amazon's own home screen and leaves it there until another app is opened. */
     static void amazon(Context c) {
         paused = true;
+        Keeper.pause();
         Intent i = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
                 .setPackage(AMAZON).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {

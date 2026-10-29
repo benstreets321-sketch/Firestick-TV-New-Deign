@@ -24,7 +24,7 @@ final class Aerials {
     private static final String TAG = "MyHome";
 
     static final class Video {
-        String uhd, hd, timeOfDay;
+        String uhd, hd, h264, timeOfDay;
     }
 
     private static List<Video> all;
@@ -47,6 +47,7 @@ final class Aerials {
                 Video v = new Video();
                 v.uhd = o.getString("u4");
                 v.hd = o.getString("hd");
+                v.h264 = o.optString("h264", v.hd);
                 v.timeOfDay = o.optString("t", "day");
                 all.add(v);
             }
@@ -69,8 +70,14 @@ final class Aerials {
      * A video that has not played recently. Three times in four it matches the time of day
      * (bright scenes by day, sunsets in the evening, night shots late), so the room's mood fits.
      */
-    static synchronized Video next(Context c) {
+    static synchronized Video next(Context c, boolean h264Only) {
         List<Video> list = all(c);
+        if (h264Only) {
+            // Only clips with a separate H.264 version (Apple's) play on sticks without HEVC.
+            List<Video> playable = new ArrayList<>();
+            for (Video v : list) if (!v.h264.equals(v.hd)) playable.add(v);
+            if (!playable.isEmpty()) list = playable;
+        }
         if (list.isEmpty()) return null;
         String want = now();
         boolean match = random.nextInt(4) != 0;

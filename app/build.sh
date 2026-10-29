@@ -25,7 +25,7 @@ trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/gen" "$WORK/classes" build
 
 aapt package -f -M AndroidManifest.xml -S res -A assets -I "$JAR" -J "$WORK/gen" \
-  --min-sdk-version 28 --target-sdk-version 28 \
+  --min-sdk-version 25 --target-sdk-version 28 \
   --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
   -F "$WORK/app.apk"
 
@@ -33,7 +33,7 @@ find src "$WORK/gen" -name '*.java' > "$WORK/sources.txt"
 javac --release 8 -Xlint:all -Xlint:-options -encoding UTF-8 \
   -classpath "$JAR" -d "$WORK/classes" @"$WORK/sources.txt"
 
-"$DX" --dex --min-sdk-version=28 --output="$WORK/classes.dex" "$WORK/classes"
+"$DX" --dex --min-sdk-version=25 --output="$WORK/classes.dex" "$WORK/classes"
 (cd "$WORK" && zip -q -X app.apk classes.dex)
 
 zipalign -f -p 4 "$WORK/app.apk" "$WORK/aligned.apk"
