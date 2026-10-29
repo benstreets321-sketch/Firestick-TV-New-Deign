@@ -50,7 +50,7 @@ import java.util.concurrent.Executors;
  * and live football top right, and every app in one row along the bottom. Hold OK (or press
  * the ☰ button) on an app to move, hide or uninstall it.
  */
-public final class Home extends Activity {
+public class Home extends Activity {
     private static final String TAG = "MyHome";
     private static final long ROTATE_MS = 60_000;
     private static final long FADE_MS = 1800;
@@ -122,6 +122,13 @@ public final class Home extends Activity {
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        if (Keeper.legacy() && getClass() == Home.class) {
+            // Fire OS 6: switch to the copy without a HOME category (see LegacyHome) and leave.
+            Keeper.useLegacyHome(this);
+            startActivity(new Intent(this, LegacyHome.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            finish();
+            return;
+        }
         build();
         setContentView(root);
         IntentFilter pf = new IntentFilter();
@@ -139,6 +146,7 @@ public final class Home extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (root == null) return;
         resumed = true;
         Guard.arrived(this);
         IntentFilter f = new IntentFilter(Intent.ACTION_TIME_TICK);
@@ -167,6 +175,7 @@ public final class Home extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (root == null) return;
         resumed = false;
         unregisterReceiver(time);
         ui.removeCallbacks(rotate);
@@ -180,6 +189,10 @@ public final class Home extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (root == null) {
+            super.onDestroy();
+            return;
+        }
         unregisterReceiver(packages);
         io.shutdownNow();
         net.shutdownNow();

@@ -42,9 +42,26 @@ public final class Keeper extends Service {
         paused = true;
     }
 
-    /** Starts the keeper on Fire OS 6 (Android 7.1); newer Fire OS uses the accessibility Guard. */
+    /** Fire OS 6 (Android 7.1); newer Fire OS uses the accessibility Guard. */
+    static boolean legacy() {
+        return Build.VERSION.SDK_INT < 26;
+    }
+
+    /** Turns off Home (CATEGORY_HOME) and turns on LegacyHome, once. */
+    static void useLegacyHome(Context c) {
+        android.content.pm.PackageManager pm = c.getPackageManager();
+        pm.setComponentEnabledSetting(new android.content.ComponentName(c, LegacyHome.class),
+                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP);
+        pm.setComponentEnabledSetting(new android.content.ComponentName(c, Home.class),
+                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                android.content.pm.PackageManager.DONT_KILL_APP);
+    }
+
+    /** Starts the keeper on Fire OS 6. */
     static void start(Context c) {
-        if (Build.VERSION.SDK_INT >= 26) return;
+        if (!legacy()) return;
+        useLegacyHome(c);
         c.startService(new Intent(c, Keeper.class));
     }
 
@@ -140,7 +157,7 @@ public final class Keeper extends Service {
                 Log.w(TAG, "keeper: moveToFront failed", t);
             }
         }
-        Intent i = new Intent(this, Home.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+        Intent i = new Intent(this, LegacyHome.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
                 | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pi = PendingIntent.getActivity(this, 1, i, PendingIntent.FLAG_UPDATE_CURRENT);
         AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
