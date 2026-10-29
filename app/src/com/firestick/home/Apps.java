@@ -9,7 +9,11 @@ import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.CornerPathEffect;
+import android.graphics.LinearGradient;
 import android.graphics.Paint;
+import android.graphics.RadialGradient;
+import android.graphics.Shader;
 import android.graphics.Path;
 import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
@@ -85,7 +89,7 @@ final class Apps {
         for (App a : apps) {
             if (PLAY_BUTTON.contains(a.pkg)) {
                 a.art = playButton();
-                a.color = 0xFF0F0F0F;
+                a.color = 0xFFD7141F;
                 if (a.banner == null) a.banner = a.icon; // drawn as a banner tile
             } else if (a.banner != null) {
                 banner(a);
@@ -145,24 +149,40 @@ final class Apps {
         prefs(c).edit().remove("hidden").apply();
     }
 
-    /** A red rounded rectangle with a white play triangle on near-black, at banner size. */
+    /**
+     * SmartTube's tile: a rich red gradient filling the whole tile with a single soft-cornered
+     * white play triangle in the middle, at banner size.
+     */
     private static Bitmap playButton() {
         int w = 400, h = 225;
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
-        c.drawColor(0xFF0F0F0F);
-        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-        p.setColor(0xFFFF0033);
-        float bw = 150, bh = 105, x = (w - bw) / 2f, y = (h - bh) / 2f;
-        c.drawRoundRect(new RectF(x, y, x + bw, y + bh), 30, 30, p);
-        p.setColor(Color.WHITE);
+        Paint bg = new Paint();
+        bg.setShader(new LinearGradient(0, 0, w, h, 0xFFFF3B30, 0xFFB0000F, Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w, h, bg);
+        // A gentle highlight towards the top left, so the tile is not flat.
+        Paint glow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        glow.setShader(new RadialGradient(w * 0.3f, h * 0.2f, w * 0.7f, 0x33FFFFFF, 0x00FFFFFF,
+                Shader.TileMode.CLAMP));
+        c.drawRect(0, 0, w, h, glow);
+
+        float cx = w / 2f + 8, cy = h / 2f, r = 44;
         Path tri = new Path();
-        float cx = w / 2f + 5, cy = h / 2f, r = 26;
-        tri.moveTo(cx - r * 0.8f, cy - r);
+        tri.moveTo(cx - r * 0.75f, cy - r);
         tri.lineTo(cx + r, cy);
-        tri.lineTo(cx - r * 0.8f, cy + r);
+        tri.lineTo(cx - r * 0.75f, cy + r);
         tri.close();
-        c.drawPath(tri, p);
+        Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
+        shadow.setColor(0x40000000);
+        shadow.setPathEffect(new CornerPathEffect(14));
+        c.save();
+        c.translate(0, 5);
+        c.drawPath(tri, shadow);
+        c.restore();
+        Paint white = new Paint(Paint.ANTI_ALIAS_FLAG);
+        white.setColor(Color.WHITE);
+        white.setPathEffect(new CornerPathEffect(14));
+        c.drawPath(tri, white);
         return b;
     }
 

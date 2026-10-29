@@ -681,7 +681,7 @@ public final class Home extends Activity {
             @Override
             public void onFocusChange(View v, boolean has) {
                 bg.setStroke(has ? dp(2) : dp(1), has ? Color.WHITE : 0x26FFFFFF);
-                v.animate().scaleX(has ? 1.03f : 1f).scaleY(has ? 1.03f : 1f).setDuration(150).start();
+                bg.setColor(has ? 0xCC0B0D10 : 0x8C0B0D10);
             }
         });
         scoresCard.setOnClickListener(new View.OnClickListener() {
@@ -729,7 +729,7 @@ public final class Home extends Activity {
             @Override
             public void run() {
                 long now = System.currentTimeMillis();
-                List<Scores.Match> all = Scores.fetch(net, now - Scores.DAY_MS, now + 2 * Scores.DAY_MS);
+                List<Scores.Match> all = Scores.fetch(net, now - 3 * Scores.DAY_MS, now + 7 * Scores.DAY_MS);
                 List<Scores.Match> picked = null;
                 Scores.Board board = null;
                 if (all != null) {
@@ -737,6 +737,29 @@ public final class Home extends Activity {
                     picked = new ArrayList<>();
                     for (List<Scores.Match> part : java.util.Arrays.asList(board.live, board.next, board.results)) {
                         for (Scores.Match m : part) if (picked.size() < CARD_ROWS) picked.add(m);
+                    }
+                    // A quiet spell: fill the card with the next fixtures further ahead, then older results.
+                    if (picked.size() < CARD_ROWS) {
+                        List<Scores.Match> later = new ArrayList<>(), earlier = new ArrayList<>();
+                        for (Scores.Match m : all) {
+                            if (picked.contains(m)) continue;
+                            if (m.state == Scores.PRE && m.kickoff > now) later.add(m);
+                            else if (m.state == Scores.DONE) earlier.add(m);
+                        }
+                        java.util.Collections.sort(later, new java.util.Comparator<Scores.Match>() {
+                            @Override
+                            public int compare(Scores.Match a, Scores.Match c) {
+                                return Long.compare(a.kickoff, c.kickoff);
+                            }
+                        });
+                        java.util.Collections.sort(earlier, new java.util.Comparator<Scores.Match>() {
+                            @Override
+                            public int compare(Scores.Match a, Scores.Match c) {
+                                return Long.compare(c.kickoff, a.kickoff);
+                            }
+                        });
+                        for (Scores.Match m : later) if (picked.size() < CARD_ROWS) picked.add(m);
+                        for (Scores.Match m : earlier) if (picked.size() < CARD_ROWS) picked.add(m);
                     }
                 }
                 final Map<String, Bitmap> fresh = picked == null ? new HashMap<String, Bitmap>() : crestsFor(picked, crestPx);
