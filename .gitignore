@@ -1,0 +1,2 @@
+# The signing key stays private (this repository is public).
+*.keystore
