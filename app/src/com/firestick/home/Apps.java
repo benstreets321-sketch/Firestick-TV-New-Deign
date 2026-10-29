@@ -9,6 +9,9 @@ import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.text.TextUtils;
 
@@ -35,6 +38,10 @@ final class Apps {
     private static final Set<String> NEVER = new HashSet<>(Arrays.asList(
             "com.firestick.home", "tv.dumbtv.home", Guard.AMAZON, "com.amazon.tv.settings.v2",
             "com.amazon.venezia", "com.amazon.firehomestarter"));
+
+    /** Apps drawn with a plain red play button instead of their own artwork (SmartTube's builds). */
+    private static final Set<String> PLAY_BUTTON = new HashSet<>(Arrays.asList(
+            "com.teamsmart.videomanager.tv", "com.liskovsoft.smarttubetv.beta", "com.liskovsoft.smarttubetv"));
 
     static final class App {
         String pkg;
@@ -76,7 +83,11 @@ final class Apps {
             }
         });
         for (App a : apps) {
-            if (a.banner != null) {
+            if (PLAY_BUTTON.contains(a.pkg)) {
+                a.art = playButton();
+                a.color = 0xFF0F0F0F;
+                if (a.banner == null) a.banner = a.icon; // drawn as a banner tile
+            } else if (a.banner != null) {
                 banner(a);
             } else {
                 a.color = edgeColor(a.icon, false);
@@ -132,6 +143,27 @@ final class Apps {
 
     static void unhideAll(Context c) {
         prefs(c).edit().remove("hidden").apply();
+    }
+
+    /** A red rounded rectangle with a white play triangle on near-black, at banner size. */
+    private static Bitmap playButton() {
+        int w = 400, h = 225;
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        Canvas c = new Canvas(b);
+        c.drawColor(0xFF0F0F0F);
+        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+        p.setColor(0xFFFF0033);
+        float bw = 150, bh = 105, x = (w - bw) / 2f, y = (h - bh) / 2f;
+        c.drawRoundRect(new RectF(x, y, x + bw, y + bh), 30, 30, p);
+        p.setColor(Color.WHITE);
+        Path tri = new Path();
+        float cx = w / 2f + 5, cy = h / 2f, r = 26;
+        tri.moveTo(cx - r * 0.8f, cy - r);
+        tri.lineTo(cx + r, cy);
+        tri.lineTo(cx - r * 0.8f, cy + r);
+        tri.close();
+        c.drawPath(tri, p);
+        return b;
     }
 
     private static Bitmap render(Drawable d, int w, int h) {

@@ -1113,7 +1113,7 @@ public final class Home extends Activity {
         bottom.setClipChildren(false);
         bottom.setClipToPadding(false);
 
-        focusedName = text(22, "sans-serif-medium", Typeface.NORMAL);
+        focusedName = text(19, "sans-serif-medium", Typeface.NORMAL);
         LinearLayout.LayoutParams fl = wrap();
         fl.leftMargin = dp(48);
         bottom.addView(focusedName, fl);
@@ -1127,7 +1127,7 @@ public final class Home extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setClipChildren(false);
         row.setClipToPadding(false);
-        row.setPadding(dp(48), dp(22), dp(26), dp(22));
+        row.setPadding(dp(48), dp(18), dp(30), dp(18));
         rowScroll.addView(row, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         bottom.addView(rowScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1182,8 +1182,8 @@ public final class Home extends Activity {
         t.setTag(app);
         t.setFocusable(true);
         t.setClipToOutline(true);
-        t.setBackground(rounded(app.color, dp(12)));
-        final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(12));
+        t.setBackground(rounded(app.color, dp(10)));
+        final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(10));
         t.setForeground(ring);
 
         if (app.banner != null) {
@@ -1194,7 +1194,7 @@ public final class Home extends Activity {
             boolean trimmed = app.art != null && app.art.getWidth() < 400 * 0.9f;
             if (app.art != null) img.setImageBitmap(app.art);
             else img.setImageDrawable(app.banner);
-            if (trimmed) img.setPadding(dp(18), dp(14), dp(18), dp(14));
+            if (trimmed) img.setPadding(dp(15), dp(11), dp(15), dp(11));
             t.addView(img, match());
         } else {
             LinearLayout col = new LinearLayout(this);
@@ -1204,15 +1204,15 @@ public final class Home extends Activity {
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             if (app.art != null) img.setImageBitmap(app.art);
             else img.setImageDrawable(app.icon);
-            col.addView(img, new LinearLayout.LayoutParams(dp(56), dp(56)));
-            TextView name = text(12, "sans-serif-medium", Typeface.NORMAL);
+            col.addView(img, new LinearLayout.LayoutParams(dp(44), dp(44)));
+            TextView name = text(10.5f, "sans-serif-medium", Typeface.NORMAL);
             name.setText(app.label);
             name.setSingleLine(true);
             name.setEllipsize(TextUtils.TruncateAt.END);
             name.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams nl = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            nl.topMargin = dp(7);
+            nl.topMargin = dp(5);
             nl.leftMargin = dp(10);
             nl.rightMargin = dp(10);
             col.addView(name, nl);
@@ -1252,8 +1252,8 @@ public final class Home extends Activity {
                 return true;
             }
         });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(176), dp(99));
-        lp.rightMargin = dp(22);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(144), dp(81));
+        lp.rightMargin = dp(18);
         t.setLayoutParams(lp);
         return t;
     }
