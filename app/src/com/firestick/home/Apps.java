@@ -64,6 +64,8 @@ final class Apps {
         Drawable banner, icon;
         /** The artwork to show, with empty margins trimmed off so the logo fills its tile. */
         Bitmap art;
+        /** The banner was a small logo in empty space; it gets breathing room in its tile. */
+        boolean trimmed;
         /** The tile's colour, taken from the edges of the app's own artwork. */
         int color;
     }
@@ -73,6 +75,8 @@ final class Apps {
      * its interface at 1080p even on a 4K TV), so logos stay crisp when a tile is enlarged.
      */
     static final int ART_W = 640, ART_H = 360;
+    /** The tile and icon sizes on screen, in dp (Home draws them at these sizes). */
+    static final int TILE_W_DP = 120, TILE_H_DP = 68, ICON_DP = 34;
 
     private Apps() {}
 
@@ -102,16 +106,23 @@ final class Apps {
                 return collator.compare(a.label.toString(), b.label.toString());
             }
         });
+        // Artwork ends at the tile's pixel size when enlarged (selected), drawn 1:1 on screen.
+        float density = c.getResources().getDisplayMetrics().density;
+        int tileW = Math.round(TILE_W_DP * density * 1.15f), tileH = Math.round(TILE_H_DP * density * 1.15f);
+        int iconPx = Math.round(ICON_DP * density * 1.15f);
         for (App a : apps) {
             if (playButton(a)) {
-                a.art = playButton();
+                a.art = shrink(playButton(), tileW, tileH);
                 a.color = 0xFFD7141F;
                 if (a.banner == null) a.banner = a.icon; // drawn as a banner tile
             } else if (a.banner != null) {
                 banner(a);
+                boolean trimmed = a.art != null && a.art.getWidth() < ART_W * 0.9f;
+                a.trimmed = trimmed;
+                a.art = shrink(a.art, trimmed ? tileW * 4 / 5 : tileW, trimmed ? tileH * 3 / 4 : tileH);
             } else {
                 a.color = edgeColor(a.icon, false);
-                a.art = trim(render(a.icon, 288, 288), Color.TRANSPARENT, 0.06f);
+                a.art = shrink(trim(render(a.icon, 288, 288), Color.TRANSPARENT, 0.06f), iconPx, iconPx);
             }
         }
         return apps;
@@ -136,10 +147,44 @@ final class Apps {
             a.label = ri.loadLabel(pm);
             a.intent = new Intent(Intent.ACTION_MAIN).addCategory(category)
                     .setClassName(ai.packageName, ai.name);
-            a.banner = ai.loadBanner(pm);
-            if (a.banner == null) a.icon = ai.loadIcon(pm);
+            a.banner = sharpest(pm, ai, true);
+            if (a.banner == null) a.icon = sharpest(pm, ai, false);
             found.put(a.pkg, a);
         }
+    }
+
+    /**
+     * The app's banner (or icon) in the highest-resolution version it ships. loadBanner and
+     * loadIcon pick the version for the TV's own screen density, often a small one that then
+     * looked blurry once scaled up to a tile.
+     */
+    private static Drawable sharpest(PackageManager pm, ActivityInfo ai, boolean banner) {
+        int id = banner ? (ai.banner != 0 ? ai.banner : ai.applicationInfo.banner) : ai.getIconResource();
+        if (id != 0) {
+            try {
+                android.content.res.Resources r = pm.getResourcesForApplication(ai.applicationInfo);
+                Drawable d = r.getDrawableForDensity(id, android.util.DisplayMetrics.DENSITY_XXXHIGH, null);
+                if (d != null) return d;
+            } catch (Exception ignored) {
+                // fall through to the standard lookup
+            }
+        }
+        return banner ? ai.loadBanner(pm) : ai.loadIcon(pm);
+    }
+
+    /**
+     * Scales a picture down to fit {@code w} x {@code h} in halving steps with filtering, so a
+     * big source ends up crisp instead of shimmering or soft from one large jump.
+     */
+    static Bitmap shrink(Bitmap b, int w, int h) {
+        if (b == null || w <= 0 || h <= 0) return b;
+        float fit = Math.min((float) w / b.getWidth(), (float) h / b.getHeight());
+        if (fit >= 1f) return b;
+        int tw = Math.max(1, Math.round(b.getWidth() * fit)), th = Math.max(1, Math.round(b.getHeight() * fit));
+        while (b.getWidth() / 2 >= tw && b.getHeight() / 2 >= th) {
+            b = Bitmap.createScaledBitmap(b, b.getWidth() / 2, b.getHeight() / 2, true);
+        }
+        return Bitmap.createScaledBitmap(b, tw, th, true);
     }
 
     static List<String> order(Context c) {

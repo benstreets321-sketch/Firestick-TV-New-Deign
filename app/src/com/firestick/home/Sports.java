@@ -251,7 +251,7 @@ public final class Sports extends Activity {
                         List<Scores.Match> ms = Scores.fetch(net, now - DAYS_BACK * Scores.DAY_MS,
                                 now + DAYS_AHEAD * Scores.DAY_MS, false);
                         if (ms != null) {
-                            int px = dp(72);
+                            int px = dp(24);
                             for (Scores.Match m : ms) {
                                 for (String u : new String[] {m.homeLogo, m.awayLogo}) {
                                     if (u == null || u.isEmpty() || crests.containsKey(u)) continue;

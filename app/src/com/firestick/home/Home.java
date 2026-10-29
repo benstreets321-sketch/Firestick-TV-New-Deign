@@ -150,7 +150,8 @@ public final class Home extends Activity {
         startBackground();
         if (lastWallpaperRefresh == 0
                 || SystemClock.elapsedRealtime() - lastWallpaperRefresh > WALLPAPER_REFRESH_MS) {
-            refreshWallpapers();
+            // Photos are only the fallback when videos are on: no downloading them in the background.
+            if (VideoLayer.PHOTOS.equals(VideoLayer.mode(this)) || photos.isEmpty()) refreshWallpapers();
         }
         ui.removeCallbacks(scores);
         if (lastScores == 0 || SystemClock.elapsedRealtime() - lastScores > SCORES_LIVE_MS) loadScores();
@@ -779,12 +780,12 @@ public final class Home extends Activity {
 
     private void loadScores() {
         lastScores = SystemClock.elapsedRealtime();
-        final int crestPx = dp(56);
+        final int crestPx = dp(Math.round(15 * 0.9f));
         scoresIo.execute(new Runnable() {
             @Override
             public void run() {
                 long now = System.currentTimeMillis();
-                List<Scores.Match> all = Scores.fetch(net, now - 3 * Scores.DAY_MS, now + 7 * Scores.DAY_MS, true);
+                List<Scores.Match> all = Scores.fetch(net, now - Scores.DAY_MS, now + 4 * Scores.DAY_MS, true);
                 List<Scores.Match> picked = null;
                 Scores.Board board = null;
                 if (all != null) {
@@ -1014,7 +1015,13 @@ public final class Home extends Activity {
 
     /** The full Sports screen: football, F1, darts and pickleball. */
     private void showAll() {
-        launch(new Intent(this, Sports.class));
+        // Started plainly: NEW_TASK | RESET_TASK_IF_NEEDED from the home task only brings that
+        // task forward and opens nothing on Fire OS.
+        try {
+            startActivity(new Intent(this, Sports.class));
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Could not open Sports", Toast.LENGTH_SHORT).show();
+        }
     }
 
     // ---- apps ----
@@ -1103,7 +1110,7 @@ public final class Home extends Activity {
             // of empty margins gets breathing room; the tile colour is the banner's background.
             ImageView img = new ImageView(this);
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            boolean trimmed = app.art != null && app.art.getWidth() < Apps.ART_W * 0.9f;
+            boolean trimmed = app.trimmed;
             if (app.art != null) img.setImageBitmap(app.art);
             else img.setImageDrawable(app.banner);
             if (trimmed) img.setPadding(dp(12), dp(9), dp(12), dp(9));
@@ -1116,7 +1123,7 @@ public final class Home extends Activity {
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             if (app.art != null) img.setImageBitmap(app.art);
             else img.setImageDrawable(app.icon);
-            col.addView(img, new LinearLayout.LayoutParams(dp(34), dp(34)));
+            col.addView(img, new LinearLayout.LayoutParams(dp(Apps.ICON_DP), dp(Apps.ICON_DP)));
             TextView name = text(9.5f, "sans-serif-medium", Typeface.NORMAL);
             name.setText(app.label);
             name.setSingleLine(true);
@@ -1164,7 +1171,7 @@ public final class Home extends Activity {
                 return true;
             }
         });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(120), dp(68));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(Apps.TILE_W_DP), dp(Apps.TILE_H_DP));
         lp.rightMargin = dp(15);
         t.setLayoutParams(lp);
         return t;

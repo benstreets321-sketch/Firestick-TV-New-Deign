@@ -241,8 +241,9 @@ final class Scores {
             int sample = 1;
             while (o.outWidth / (sample * 2) >= px) sample *= 2;
             o = new BitmapFactory.Options();
-            o.inSampleSize = sample;
-            return BitmapFactory.decodeFile(f.getPath(), o);
+            o.inSampleSize = Math.max(1, sample / 2);
+            // Decoded a little larger, then stepped down to the exact size it is drawn at.
+            return Apps.shrink(BitmapFactory.decodeFile(f.getPath(), o), px, px);
         } catch (Exception e) {
             Log.w(TAG, "crest failed: " + url, e);
             return null;

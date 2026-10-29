@@ -32,8 +32,6 @@ final class VideoLayer implements SurfaceHolder.Callback {
     private static final long DISSOLVE_MS = 1100;
     /** After this many failures in a row the owner falls back to photos. */
     private static final int GIVE_UP = 3;
-    /** How often a playing video's frame is snapshotted, so there is always a recent one. */
-    private static final long SNAPSHOT_MS = 4_000;
 
     interface Listener {
         /** The first frame of a video is on screen. */
@@ -47,7 +45,7 @@ final class VideoLayer implements SurfaceHolder.Callback {
 
     /** The owner's choice of background: 4K video, HD video or photos. */
     static String mode(Context c) {
-        return prefs(c).getString("background", UHD);
+        return prefs(c).getString("background", HD);
     }
 
     static void setMode(Context c, String mode) {
@@ -88,7 +86,6 @@ final class VideoLayer implements SurfaceHolder.Callback {
                 lastPosition = p.getCurrentPosition();
             } catch (IllegalStateException ignored) {
             }
-            if (System.currentTimeMillis() - lastSnapshot > SNAPSHOT_MS) snapshot(null);
             ui.postDelayed(this, 400);
         }
     };
@@ -168,7 +165,7 @@ final class VideoLayer implements SurfaceHolder.Callback {
             if (done != null) done.run(false);
             return;
         }
-        int w = Math.min(surface.getWidth(), 1920), h = Math.min(surface.getHeight(), 1080);
+        int w = Math.min(surface.getWidth(), 1280), h = Math.min(surface.getHeight(), 720);
         final Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         try {
             PixelCopy.request(surface, b, new PixelCopy.OnPixelCopyFinishedListener() {
