@@ -1136,7 +1136,7 @@ public final class Home extends Activity {
         bottom.setClipChildren(false);
         bottom.setClipToPadding(false);
 
-        focusedName = text(19, "sans-serif-medium", Typeface.NORMAL);
+        focusedName = text(17, "sans-serif-medium", Typeface.NORMAL);
         LinearLayout.LayoutParams fl = wrap();
         fl.leftMargin = dp(48);
         bottom.addView(focusedName, fl);
@@ -1150,7 +1150,7 @@ public final class Home extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setClipChildren(false);
         row.setClipToPadding(false);
-        row.setPadding(dp(48), dp(18), dp(30), dp(18));
+        row.setPadding(dp(48), dp(16), dp(33), dp(16));
         rowScroll.addView(row, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
         bottom.addView(rowScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1205,8 +1205,8 @@ public final class Home extends Activity {
         t.setTag(app);
         t.setFocusable(true);
         t.setClipToOutline(true);
-        t.setBackground(rounded(app.color, dp(10)));
-        final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(10));
+        t.setBackground(rounded(app.color, dp(9)));
+        final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(9));
         t.setForeground(ring);
 
         if (app.banner != null) {
@@ -1217,7 +1217,7 @@ public final class Home extends Activity {
             boolean trimmed = app.art != null && app.art.getWidth() < 400 * 0.9f;
             if (app.art != null) img.setImageBitmap(app.art);
             else img.setImageDrawable(app.banner);
-            if (trimmed) img.setPadding(dp(15), dp(11), dp(15), dp(11));
+            if (trimmed) img.setPadding(dp(12), dp(9), dp(12), dp(9));
             t.addView(img, match());
         } else {
             LinearLayout col = new LinearLayout(this);
@@ -1227,15 +1227,15 @@ public final class Home extends Activity {
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
             if (app.art != null) img.setImageBitmap(app.art);
             else img.setImageDrawable(app.icon);
-            col.addView(img, new LinearLayout.LayoutParams(dp(44), dp(44)));
-            TextView name = text(10.5f, "sans-serif-medium", Typeface.NORMAL);
+            col.addView(img, new LinearLayout.LayoutParams(dp(34), dp(34)));
+            TextView name = text(9.5f, "sans-serif-medium", Typeface.NORMAL);
             name.setText(app.label);
             name.setSingleLine(true);
             name.setEllipsize(TextUtils.TruncateAt.END);
             name.setGravity(Gravity.CENTER);
             LinearLayout.LayoutParams nl = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            nl.topMargin = dp(5);
+            nl.topMargin = dp(4);
             nl.leftMargin = dp(10);
             nl.rightMargin = dp(10);
             col.addView(name, nl);
@@ -1248,7 +1248,7 @@ public final class Home extends Activity {
                 if (v == moving) return;
                 ring.setStroke(has ? dp(3) : 0, Color.WHITE);
                 v.setElevation(has ? dp(10) : 0);
-                v.animate().scaleX(has ? 1.12f : 1f).scaleY(has ? 1.12f : 1f).setDuration(160)
+                v.animate().scaleX(has ? 1.15f : 1f).scaleY(has ? 1.15f : 1f).setDuration(160)
                         .setInterpolator(new DecelerateInterpolator()).start();
                 if (has && moving == null) focusedName.setText(app.label);
                 if (has && row.indexOfChild(v) == 0) {
@@ -1275,8 +1275,8 @@ public final class Home extends Activity {
                 return true;
             }
         });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(144), dp(81));
-        lp.rightMargin = dp(18);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(120), dp(68));
+        lp.rightMargin = dp(15);
         t.setLayoutParams(lp);
         return t;
     }

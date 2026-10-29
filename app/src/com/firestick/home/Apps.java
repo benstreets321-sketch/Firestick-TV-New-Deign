@@ -50,8 +50,11 @@ final class Apps {
 
     /** SmartTube by package (its builds have used several names over time) or by its name. */
     private static boolean playButton(App a) {
-        return PLAY_BUTTON.contains(a.pkg) || a.pkg.contains("smarttube")
-                || a.label != null && a.label.toString().toLowerCase(java.util.Locale.ROOT).contains("smarttube");
+        String pkg = a.pkg.toLowerCase(java.util.Locale.ROOT);
+        String label = a.label == null ? "" : a.label.toString().toLowerCase(java.util.Locale.ROOT)
+                .replace(" ", "");
+        return PLAY_BUTTON.contains(a.pkg) || pkg.contains("smarttube") || pkg.contains("liskovsoft")
+                || pkg.contains("teamsmart") || label.contains("smarttube") || label.contains("stube");
     }
 
     static final class App {
