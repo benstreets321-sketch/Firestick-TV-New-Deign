@@ -65,8 +65,12 @@ public final class Home extends Activity {
     private final ExecutorService net = Executors.newFixedThreadPool(4);
     private final ExecutorService scoresIo = Executors.newSingleThreadExecutor();
 
-    private FrameLayout root;
+    private FrameLayout root, photoLayer;
     private ImageView photoBack, photoFront;
+    private VideoLayer video;
+    /** An aerial video is on screen (the photos are faded out behind it). */
+    private boolean videoPlaying;
+    private TextView backgroundItem;
     private TextView clock, date, focusedName;
     private LinearLayout scoresCard, row, menu, optionsPanel;
     private FrameLayout menuButton, options;
@@ -102,6 +106,7 @@ public final class Home extends Activity {
     private final Runnable rotate = new Runnable() {
         @Override
         public void run() {
+            if (videoPlaying) return;
             nextPhoto();
             ui.postDelayed(this, ROTATE_MS);
         }
@@ -155,6 +160,7 @@ public final class Home extends Activity {
         tick();
         ui.removeCallbacks(rotate);
         ui.postDelayed(rotate, ROTATE_MS);
+        startBackground();
         if (lastWallpaperRefresh == 0
                 || SystemClock.elapsedRealtime() - lastWallpaperRefresh > WALLPAPER_REFRESH_MS) {
             refreshWallpapers();
@@ -177,6 +183,10 @@ public final class Home extends Activity {
         ui.removeCallbacks(rotate);
         ui.removeCallbacks(scores);
         ui.removeCallbacks(allRefresh);
+        video.stop();
+        videoPlaying = false;
+        photoLayer.animate().cancel();
+        photoLayer.setAlpha(1f);
         if (moving != null) stopMoving();
         hideOptions();
         hideMenu();
@@ -295,14 +305,41 @@ public final class Home extends Activity {
 
     private void build() {
         root = new FrameLayout(this);
-        root.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[] {0xFF0F2027, 0xFF203A43, 0xFF2C5364}));
+        root.setBackgroundColor(Color.BLACK);
 
+        // Bottom to top: the aerial video, a black veil for its fades, then the photos, which
+        // cover everything until a video is actually playing (and come back if videos fail).
+        android.view.SurfaceView surface = new android.view.SurfaceView(this);
+        root.addView(surface, match());
+        View veil = new View(this);
+        veil.setBackgroundColor(Color.BLACK);
+        root.addView(veil, match());
+        video = new VideoLayer(this, surface, veil, new VideoLayer.Listener() {
+            @Override
+            public void onPlaying() {
+                if (videoPlaying) return;
+                videoPlaying = true;
+                ui.removeCallbacks(rotate);
+                photoLayer.animate().alpha(0f).setDuration(1200).start();
+            }
+
+            @Override
+            public void onFailed() {
+                showPhotos();
+                Toast.makeText(Home.this, "Videos aren't loading right now, showing photos",
+                        Toast.LENGTH_SHORT).show();
+            }
+        });
+
+        photoLayer = new FrameLayout(this);
+        photoLayer.setBackground(new GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                new int[] {0xFF0F2027, 0xFF203A43, 0xFF2C5364}));
         photoBack = photoView();
         photoFront = photoView();
         photoFront.setAlpha(0f);
-        root.addView(photoBack, match());
-        root.addView(photoFront, match());
+        photoLayer.addView(photoBack, match());
+        photoLayer.addView(photoFront, match());
+        root.addView(photoLayer, match());
 
         // Darken the top and bottom so the clock and the app row always read well.
         View scrim = new View(this);
@@ -401,11 +438,23 @@ public final class Home extends Activity {
                 showAll();
             }
         });
-        item(menu, "New background photo", new Runnable() {
+        backgroundItem = item(menu, backgroundLabel(VideoLayer.mode(this)), new Runnable() {
+            @Override
+            public void run() {
+                nextBackground();
+            }
+        });
+        item(menu, "Next background", new Runnable() {
             @Override
             public void run() {
                 hideMenu();
-                nextPhoto();
+                if (videoPlaying || !VideoLayer.PHOTOS.equals(VideoLayer.mode(Home.this))) {
+                    video.stop();
+                    videoPlaying = false;
+                    startBackground();
+                } else {
+                    nextPhoto();
+                }
             }
         });
         item(menu, "Show hidden apps", new Runnable() {
@@ -431,7 +480,7 @@ public final class Home extends Activity {
         root.addView(menu, lp);
     }
 
-    private void item(LinearLayout into, String label, final Runnable action) {
+    private TextView item(LinearLayout into, String label, final Runnable action) {
         final TextView t = text(17, "sans-serif-medium", Typeface.NORMAL);
         t.setShadowLayer(0, 0, 0, 0);
         t.setText(label);
@@ -454,6 +503,45 @@ public final class Home extends Activity {
         });
         into.addView(t, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT));
+        return t;
+    }
+
+    // ---- background: aerial video or photos ----
+
+    private static String backgroundLabel(String mode) {
+        if (VideoLayer.HD.equals(mode)) return "Background: HD video";
+        if (VideoLayer.PHOTOS.equals(mode)) return "Background: photos";
+        return "Background: 4K video";
+    }
+
+    /** Menu: 4K video, then HD video (lighter on the internet), then photos, then back. */
+    private void nextBackground() {
+        String mode = VideoLayer.mode(this);
+        String next = VideoLayer.UHD.equals(mode) ? VideoLayer.HD
+                : VideoLayer.HD.equals(mode) ? VideoLayer.PHOTOS : VideoLayer.UHD;
+        VideoLayer.setMode(this, next);
+        backgroundItem.setText(backgroundLabel(next));
+        video.stop();
+        videoPlaying = false;
+        startBackground();
+    }
+
+    private void startBackground() {
+        String mode = VideoLayer.mode(this);
+        if (VideoLayer.PHOTOS.equals(mode)) {
+            showPhotos();
+        } else {
+            video.start(VideoLayer.UHD.equals(mode));
+        }
+    }
+
+    private void showPhotos() {
+        video.stop();
+        videoPlaying = false;
+        photoLayer.animate().cancel();
+        photoLayer.animate().alpha(1f).setDuration(600).start();
+        ui.removeCallbacks(rotate);
+        if (resumed) ui.postDelayed(rotate, ROTATE_MS);
     }
 
     private void showMenu() {

@@ -24,7 +24,7 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/my-home.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
 mkdir -p "$WORK/gen" "$WORK/classes" build
 
-aapt package -f -M AndroidManifest.xml -S res -I "$JAR" -J "$WORK/gen" \
+aapt package -f -M AndroidManifest.xml -S res -A assets -I "$JAR" -J "$WORK/gen" \
   --min-sdk-version 28 --target-sdk-version 28 \
   --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" \
   -F "$WORK/app.apk"

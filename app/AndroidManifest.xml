@@ -16,6 +16,7 @@
         android:banner="@drawable/banner"
         android:theme="@style/Home"
         android:allowBackup="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true">
 
         <activity
@@ -38,6 +39,18 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- The screensaver: the aerial videos full screen with a clock. -->
+        <service
+            android:name=".Dream"
+            android:exported="true"
+            android:label="@string/dream_label"
+            android:permission="android.permission.BIND_DREAM_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.dreams.DreamService" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </service>
 
         <!-- Fire OS keeps HOME on Amazon's launcher; this service sends it here instead. -->
         <service
