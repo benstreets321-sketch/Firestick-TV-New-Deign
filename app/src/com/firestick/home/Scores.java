@@ -26,21 +26,41 @@ final class Scores {
     private static final String TAG = "MyHome";
 
     /** ESPN's id for each competition, and the name shown on screen. Order = order on screen. */
-    /** ESPN's id, the name, and the short tag shown on each row. Order = priority on screen. */
-    private static final String[][] COMPETITIONS = {
-        {"eng.1", "Premier League", "PL"},
-        {"uefa.champions", "Champions League", "UCL"},
-        {"fifa.world", "World Cup", "WC"},
-        {"uefa.euro", "Euros", "EURO"},
-        {"eng.fa", "FA Cup", "FA"},
-        {"eng.league_cup", "Carabao Cup", "EFL"},
-        {"uefa.europa", "Europa League", "UEL"},
-        {"uefa.europa.conf", "Conference League", "UECL"},
-        {"uefa.nations", "Nations League", "UNL"},
-        {"fifa.worldq.uefa", "World Cup Qualifiers", "WCQ"},
-        {"uefa.euroq", "Euro Qualifiers", "EQ"},
-        {"eng.charity", "Community Shield", "CS"},
-        {"fifa.cwc", "Club World Cup", "CWC"},
+    /**
+     * ESPN's id, the name, the short tag shown on each row, and whether it is one of the big
+     * competitions shown on the home screen card. Order = priority on screen. The rest only
+     * appear on the Sports screen.
+     */
+    static final String[][] COMPETITIONS = {
+        {"eng.1", "Premier League", "PL", "big"},
+        {"uefa.champions", "Champions League", "UCL", "big"},
+        {"fifa.world", "World Cup", "WC", "big"},
+        {"uefa.euro", "Euros", "EURO", "big"},
+        {"eng.fa", "FA Cup", "FA", "big"},
+        {"eng.league_cup", "Carabao Cup", "EFL", "big"},
+        {"uefa.europa", "Europa League", "UEL", "big"},
+        {"uefa.europa.conf", "Conference League", "UECL", "big"},
+        {"uefa.nations", "Nations League", "UNL", "big"},
+        {"fifa.worldq.uefa", "World Cup Qualifiers", "WCQ", "big"},
+        {"uefa.euroq", "Euro Qualifiers", "EQ", "big"},
+        {"eng.charity", "Community Shield", "CS", "big"},
+        {"fifa.cwc", "Club World Cup", "CWC", "big"},
+        {"uefa.super_cup", "UEFA Super Cup", "USC", "big"},
+        {"eng.2", "Championship", "CH", ""},
+        {"eng.3", "League One", "L1", ""},
+        {"eng.4", "League Two", "L2", ""},
+        {"eng.w.1", "Women's Super League", "WSL", ""},
+        {"sco.1", "Scottish Premiership", "SCO", ""},
+        {"esp.1", "La Liga", "LIGA", ""},
+        {"ita.1", "Serie A", "SA", ""},
+        {"ger.1", "Bundesliga", "BUN", ""},
+        {"fra.1", "Ligue 1", "FRA", ""},
+        {"ned.1", "Eredivisie", "ERE", ""},
+        {"por.1", "Primeira Liga", "POR", ""},
+        {"usa.1", "MLS", "MLS", ""},
+        {"ksa.1", "Saudi Pro League", "KSA", ""},
+        {"conmebol.libertadores", "Copa Libertadores", "LIB", ""},
+        {"fifa.friendly", "International Friendlies", "INT", ""},
     };
 
     /** Fixtures this far ahead are shown. */
@@ -61,9 +81,10 @@ final class Scores {
     private Scores() {}
 
     /** Every competition at once, for games kicking off between the two times. Network: off the UI thread. */
-    static List<Match> fetch(ExecutorService pool, final long from, final long to) {
+    static List<Match> fetch(ExecutorService pool, final long from, final long to, boolean bigOnly) {
         List<Future<List<Match>>> jobs = new ArrayList<>();
         for (int i = 0; i < COMPETITIONS.length; i++) {
+            if (bigOnly && COMPETITIONS[i][3].isEmpty()) continue;
             final String id = COMPETITIONS[i][0], name = COMPETITIONS[i][1], tag = COMPETITIONS[i][2];
             final int order = i;
             jobs.add(pool.submit(new Callable<List<Match>>() {
@@ -173,6 +194,26 @@ final class Scores {
             }
         });
         return b;
+    }
+
+    static boolean isSpurs(Match m) {
+        return m.home != null && m.home.toLowerCase(Locale.ROOT).contains("tottenham")
+                || m.away != null && m.away.toLowerCase(Locale.ROOT).contains("tottenham");
+    }
+
+    /** Tottenham's game to put first: live, else the next one, else the latest result. */
+    static Match spursHighlight(List<Match> all, long now) {
+        Match next = null, last = null;
+        for (Match m : all) {
+            if (!isSpurs(m)) continue;
+            if (m.state == LIVE) return m;
+            if (m.state == PRE && m.kickoff > now - 3 * 60 * 60 * 1000L
+                    && (next == null || m.kickoff < next.kickoff)) next = m;
+            if (m.state == DONE && (last == null || m.kickoff > last.kickoff)) last = m;
+        }
+        // A result from the last day beats a fixture days away.
+        if (last != null && now - last.kickoff < RESULTS_MS && (next == null || next.kickoff - now > DAY_MS)) return last;
+        return next != null ? next : last;
     }
 
     static boolean anyLive(List<Match> ms) {

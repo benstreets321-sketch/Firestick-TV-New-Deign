@@ -88,19 +88,6 @@ public final class Home extends Activity {
     private final Map<String, String> lastScore = new HashMap<>();
     /** Games on the small card under the clock. */
     private static final int CARD_ROWS = 5;
-    /** The full-screen view: this many days back and ahead. */
-    private static final int ALL_DAYS_BACK = 4, ALL_DAYS_AHEAD = 8;
-    private FrameLayout allScores;
-    private android.widget.ScrollView allScroll;
-    private LinearLayout allList;
-    private TextView allUpdated;
-    private boolean allLive;
-    private final Runnable allRefresh = new Runnable() {
-        @Override
-        public void run() {
-            loadAll(false);
-        }
-    };
     private final Map<String, Bitmap> crests = java.util.Collections.synchronizedMap(new HashMap<String, Bitmap>());
 
     private final Runnable rotate = new Runnable() {
@@ -182,11 +169,8 @@ public final class Home extends Activity {
         unregisterReceiver(time);
         ui.removeCallbacks(rotate);
         ui.removeCallbacks(scores);
-        ui.removeCallbacks(allRefresh);
         video.stop();
         videoPlaying = false;
-        photoLayer.animate().cancel();
-        photoLayer.setAlpha(1f);
         if (moving != null) stopMoving();
         hideOptions();
         hideMenu();
@@ -207,34 +191,18 @@ public final class Home extends Activity {
         if (moving != null) stopMoving();
         hideOptions();
         hideMenu();
-        hideAll();
         focusFirstApp();
     }
 
     @Override
     public void onBackPressed() {
-        if (allScores.getVisibility() == View.VISIBLE) hideAll();
-        else if (options.getVisibility() == View.VISIBLE) hideOptions();
+        if (options.getVisibility() == View.VISIBLE) hideOptions();
         else if (menu.getVisibility() == View.VISIBLE) hideMenu();
         else focusFirstApp();
     }
 
     @Override
     public boolean dispatchKeyEvent(KeyEvent e) {
-        if (allScores != null && allScores.getVisibility() == View.VISIBLE) {
-            int code = e.getKeyCode();
-            if (code == KeyEvent.KEYCODE_DPAD_UP || code == KeyEvent.KEYCODE_DPAD_DOWN) {
-                if (e.getAction() == KeyEvent.ACTION_DOWN) {
-                    allScroll.smoothScrollBy(0, (code == KeyEvent.KEYCODE_DPAD_UP ? -1 : 1) * dp(150));
-                }
-                return true;
-            }
-            if (code == KeyEvent.KEYCODE_MENU || code == KeyEvent.KEYCODE_DPAD_CENTER) {
-                if (e.getAction() == KeyEvent.ACTION_UP) hideAll();
-                return true;
-            }
-            if (code != KeyEvent.KEYCODE_BACK) return true;
-        }
         if (moving == null) return super.dispatchKeyEvent(e);
         if (e.getAction() != KeyEvent.ACTION_DOWN) return true;
         switch (e.getKeyCode()) {
@@ -307,14 +275,13 @@ public final class Home extends Activity {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
-        // Bottom to top: the aerial video, a black veil for its fades, then the photos, which
-        // cover everything until a video is actually playing (and come back if videos fail).
+        // Bottom to top: the aerial video, the still frame that covers it while the next one
+        // loads, then the photos, which only appear when photos are chosen or videos fail.
         android.view.SurfaceView surface = new android.view.SurfaceView(this);
         root.addView(surface, match());
-        View veil = new View(this);
-        veil.setBackgroundColor(Color.BLACK);
-        root.addView(veil, match());
-        video = new VideoLayer(this, surface, veil, new VideoLayer.Listener() {
+        ImageView still = new ImageView(this);
+        root.addView(still, match());
+        video = new VideoLayer(this, surface, still, new VideoLayer.Listener() {
             @Override
             public void onPlaying() {
                 if (videoPlaying) return;
@@ -339,6 +306,7 @@ public final class Home extends Activity {
         photoFront.setAlpha(0f);
         photoLayer.addView(photoBack, match());
         photoLayer.addView(photoFront, match());
+        photoLayer.setAlpha(VideoLayer.PHOTOS.equals(VideoLayer.mode(this)) ? 1f : 0f);
         root.addView(photoLayer, match());
 
         // Darken the top and bottom so the clock and the app row always read well.
@@ -352,7 +320,6 @@ public final class Home extends Activity {
         buildRow();
         buildMenu();
         buildOptions();
-        buildAll();
     }
 
     private ImageView photoView() {
@@ -431,7 +398,7 @@ public final class Home extends Activity {
                 launch(getPackageManager().getLeanbackLaunchIntentForPackage("com.amazon.venezia"));
             }
         });
-        item(menu, "Football scores", new Runnable() {
+        item(menu, "Sports", new Runnable() {
             @Override
             public void run() {
                 hideMenu();
@@ -448,10 +415,8 @@ public final class Home extends Activity {
             @Override
             public void run() {
                 hideMenu();
-                if (videoPlaying || !VideoLayer.PHOTOS.equals(VideoLayer.mode(Home.this))) {
-                    video.stop();
-                    videoPlaying = false;
-                    startBackground();
+                if (!VideoLayer.PHOTOS.equals(VideoLayer.mode(Home.this))) {
+                    video.skip();
                 } else {
                     nextPhoto();
                 }
@@ -531,6 +496,8 @@ public final class Home extends Activity {
         if (VideoLayer.PHOTOS.equals(mode)) {
             showPhotos();
         } else {
+            photoLayer.animate().cancel();
+            photoLayer.setAlpha(0f);
             video.start(VideoLayer.UHD.equals(mode));
         }
     }
@@ -759,7 +726,7 @@ public final class Home extends Activity {
         final GradientDrawable bg = rounded(0x8C0B0D10, dp(14));
         bg.setStroke(dp(1), 0x26FFFFFF);
         scoresCard.setBackground(bg);
-        scoresCard.setPadding(dp(12), dp(9), dp(12), dp(9));
+        scoresCard.setPadding(dp(11), dp(8), dp(11), dp(8));
         scoresCard.setVisibility(View.GONE);
         scoresCard.setFocusable(true);
         scoresCard.setNextFocusUpId(scoresCard.getId());
@@ -778,7 +745,7 @@ public final class Home extends Activity {
                 showAll();
             }
         });
-        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(330),
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(296),
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         sl.topMargin = dp(14);
         box.addView(scoresCard, sl);
@@ -812,19 +779,22 @@ public final class Home extends Activity {
 
     private void loadScores() {
         lastScores = SystemClock.elapsedRealtime();
-        final int crestPx = dp(24);
+        final int crestPx = dp(56);
         scoresIo.execute(new Runnable() {
             @Override
             public void run() {
                 long now = System.currentTimeMillis();
-                List<Scores.Match> all = Scores.fetch(net, now - 3 * Scores.DAY_MS, now + 7 * Scores.DAY_MS);
+                List<Scores.Match> all = Scores.fetch(net, now - 3 * Scores.DAY_MS, now + 7 * Scores.DAY_MS, true);
                 List<Scores.Match> picked = null;
                 Scores.Board board = null;
                 if (all != null) {
                     board = Scores.relevant(all, now);
                     picked = new ArrayList<>();
+                    // Tottenham first: live, else the next game this week, else the latest result.
+                    Scores.Match spurs = Scores.spursHighlight(all, now);
+                    if (spurs != null) picked.add(spurs);
                     for (List<Scores.Match> part : java.util.Arrays.asList(board.live, board.next, board.results)) {
-                        for (Scores.Match m : part) if (picked.size() < CARD_ROWS) picked.add(m);
+                        for (Scores.Match m : part) if (picked.size() < CARD_ROWS && !picked.contains(m)) picked.add(m);
                     }
                     // A quiet spell: fill the card with the next fixtures further ahead, then older results.
                     if (picked.size() < CARD_ROWS) {
@@ -885,7 +855,7 @@ public final class Home extends Activity {
         h.setOrientation(LinearLayout.HORIZONTAL);
         h.setGravity(Gravity.CENTER_VERTICAL);
         h.setPadding(0, 0, 0, dp(4));
-        TextView title = small(9, 0xB3FFFFFF);
+        TextView title = small(8.5f, 0xB3FFFFFF);
         title.setLetterSpacing(0.14f);
         title.setText("FOOTBALL");
         h.addView(title, wrap());
@@ -902,8 +872,8 @@ public final class Home extends Activity {
             pulse(tag);
         }
         h.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-        TextView more = small(9, 0x80FFFFFF);
-        more.setText("All games ›");
+        TextView more = small(8.5f, 0x80FFFFFF);
+        more.setText("All sport ›");
         h.addView(more, wrap());
         scoresCard.addView(h);
         for (Scores.Match m : ms) scoresCard.addView(scoreRow(m, false));
@@ -935,18 +905,19 @@ public final class Home extends Activity {
 
     /** One game. {@code big} is the full-screen view; otherwise the compact card. */
     private View scoreRow(Scores.Match m, boolean big) {
-        float k = big ? 1.35f : 1f;
+        float k = big ? 1.35f : 0.9f;
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
         r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(big ? dp(12) : 0, dp(big ? 7 : 3), big ? dp(12) : 0, dp(big ? 7 : 3));
+        r.setPadding(big ? dp(12) : dp(3), dp(big ? 7 : 2.5f), big ? dp(12) : dp(3), dp(big ? 7 : 2.5f));
         if (big && m.state == Scores.LIVE) r.setBackground(rounded(0x224ADE80, dp(10)));
+        if (Scores.isSpurs(m)) r.setBackground(rounded(0x40132257, dp(7))); // Spurs navy
 
         if (!big) {
             TextView comp = small(8, 0x99FFFFFF);
             comp.setTypeface(Typeface.create("sans-serif-medium", Typeface.BOLD));
-            comp.setText(m.tag);
-            r.addView(comp, new LinearLayout.LayoutParams(dp(30), ViewGroup.LayoutParams.WRAP_CONTENT));
+            comp.setText(Scores.isSpurs(m) ? "★ " + m.tag : m.tag);
+            r.addView(comp, new LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT));
         }
 
         r.addView(team(m.home, Gravity.END, 11.5f * k), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
@@ -1041,179 +1012,9 @@ public final class Home extends Activity {
         }, 8000);
     }
 
-    // ---- all games, full screen ----
-
-    private void buildAll() {
-        allScores = new FrameLayout(this);
-        allScores.setBackgroundColor(0xF00B0D10);
-        allScores.setVisibility(View.GONE);
-
-        LinearLayout col = new LinearLayout(this);
-        col.setOrientation(LinearLayout.VERTICAL);
-        LinearLayout head = new LinearLayout(this);
-        head.setOrientation(LinearLayout.HORIZONTAL);
-        head.setGravity(Gravity.BOTTOM);
-        TextView title = text(30, "sans-serif-light", Typeface.NORMAL);
-        title.setText("Football");
-        head.addView(title, wrap());
-        head.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1));
-        allUpdated = small(12, 0x99FFFFFF);
-        head.addView(allUpdated, wrap());
-        LinearLayout.LayoutParams hl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        hl.bottomMargin = dp(10);
-        col.addView(head, hl);
-
-        allScroll = new android.widget.ScrollView(this);
-        allScroll.setVerticalScrollBarEnabled(false);
-        allScroll.setFocusable(false);
-        allList = new LinearLayout(this);
-        allList.setOrientation(LinearLayout.VERTICAL);
-        allList.setPadding(0, 0, 0, dp(40));
-        allScroll.addView(allList, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT));
-        col.addView(allScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1));
-
-        TextView hint = small(11, 0x80FFFFFF);
-        hint.setText("▲ ▼ to scroll     Back to close");
-        hint.setGravity(Gravity.CENTER);
-        LinearLayout.LayoutParams il = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT);
-        il.topMargin = dp(8);
-        col.addView(hint, il);
-
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(720), ViewGroup.LayoutParams.MATCH_PARENT);
-        lp.gravity = Gravity.CENTER_HORIZONTAL;
-        lp.topMargin = dp(32);
-        lp.bottomMargin = dp(20);
-        allScores.addView(col, lp);
-        root.addView(allScores, match());
-    }
-
+    /** The full Sports screen: football, F1, darts and pickleball. */
     private void showAll() {
-        allList.removeAllViews();
-        TextView loading = small(14, 0x99FFFFFF);
-        loading.setText("Loading games…");
-        allList.addView(loading);
-        allUpdated.setText("");
-        allScores.setVisibility(View.VISIBLE);
-        allScores.setAlpha(0f);
-        allScores.animate().alpha(1f).setDuration(200).start();
-        allScores.requestFocus();
-        loadAll(true);
-    }
-
-    private void hideAll() {
-        if (allScores == null || allScores.getVisibility() != View.VISIBLE) return;
-        ui.removeCallbacks(allRefresh);
-        allScores.setVisibility(View.GONE);
-        if (scoresCard.getVisibility() == View.VISIBLE) scoresCard.requestFocus();
-        else focusFirstApp();
-    }
-
-    private void loadAll(final boolean first) {
-        final int crestPx = dp(32);
-        scoresIo.execute(new Runnable() {
-            @Override
-            public void run() {
-                long now = System.currentTimeMillis();
-                final List<Scores.Match> all = Scores.fetch(net, now - ALL_DAYS_BACK * Scores.DAY_MS,
-                        now + ALL_DAYS_AHEAD * Scores.DAY_MS);
-                final Map<String, Bitmap> fresh = all == null ? new HashMap<String, Bitmap>() : crestsFor(all, crestPx);
-                ui.post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (allScores.getVisibility() != View.VISIBLE) return;
-                        crests.putAll(fresh);
-                        if (all == null) {
-                            if (first) {
-                                allList.removeAllViews();
-                                TextView t = small(14, 0x99FFFFFF);
-                                t.setText("Couldn't load the games. Check the internet connection.");
-                                allList.addView(t);
-                            }
-                        } else {
-                            drawAll(all, first);
-                        }
-                        ui.removeCallbacks(allRefresh);
-                        ui.postDelayed(allRefresh, allLive ? SCORES_LIVE_MS : 2 * 60_000);
-                    }
-                });
-            }
-        });
-    }
-
-    /** Every game, by day (yesterday, today, tomorrow...), then by competition. Opens on today. */
-    private void drawAll(List<Scores.Match> all, boolean scrollToToday) {
-        long now = System.currentTimeMillis();
-        long from = now - ALL_DAYS_BACK * Scores.DAY_MS, to = now + ALL_DAYS_AHEAD * Scores.DAY_MS;
-        List<Scores.Match> ms = new ArrayList<>();
-        for (Scores.Match m : all) if (m.kickoff >= from && m.kickoff <= to || m.state == Scores.LIVE) ms.add(m);
-        java.util.Collections.sort(ms, new java.util.Comparator<Scores.Match>() {
-            @Override
-            public int compare(Scores.Match a, Scores.Match b) {
-                String da = DateFormat.format("yyyyMMdd", a.kickoff).toString();
-                String db = DateFormat.format("yyyyMMdd", b.kickoff).toString();
-                if (!da.equals(db)) return da.compareTo(db);
-                if (a.order != b.order) return a.order - b.order;
-                return Long.compare(a.kickoff, b.kickoff);
-            }
-        });
-        int scroll = allScroll.getScrollY();
-        allList.removeAllViews();
-        allLive = false;
-        if (ms.isEmpty()) {
-            TextView t = small(14, 0x99FFFFFF);
-            t.setText("No games in the big competitions this week.");
-            allList.addView(t);
-        }
-        String day = null, comp = null;
-        View anchor = null;
-        String today = DateFormat.format("yyyyMMdd", now).toString();
-        for (Scores.Match m : ms) {
-            if (m.state == Scores.LIVE) allLive = true;
-            String d = DateFormat.format("yyyyMMdd", m.kickoff).toString();
-            if (!d.equals(day)) {
-                day = d;
-                comp = null;
-                TextView dh = text(20, "sans-serif-medium", Typeface.NORMAL);
-                dh.setShadowLayer(0, 0, 0, 0);
-                dh.setText(dayName(m.kickoff, now));
-                dh.setPadding(0, allList.getChildCount() == 0 ? 0 : dp(22), 0, dp(4));
-                allList.addView(dh);
-                if (anchor == null && d.compareTo(today) >= 0) anchor = dh;
-            }
-            if (!m.competition.equals(comp)) {
-                comp = m.competition;
-                TextView ch = small(11, 0x99FFFFFF);
-                ch.setLetterSpacing(0.14f);
-                ch.setText(m.competition.toUpperCase());
-                ch.setPadding(dp(12), dp(10), 0, dp(4));
-                allList.addView(ch);
-            }
-            allList.addView(scoreRow(m, true));
-        }
-        allUpdated.setText("Updated " + DateFormat.format(DateFormat.is24HourFormat(this) ? "HH:mm" : "h:mm", now)
-                + (allLive ? "  ·  live games refresh every 20 s" : ""));
-        final View target = anchor;
-        final int keep = scroll;
-        allScroll.post(new Runnable() {
-            @Override
-            public void run() {
-                if (scrollToToday) {
-                    allScroll.scrollTo(0, target == null ? 0 : target.getTop());
-                } else {
-                    allScroll.scrollTo(0, keep);
-                }
-            }
-        });
-    }
-
-    private static String dayName(long t, long now) {
-        if (sameDay(t, now)) return "Today";
-        if (sameDay(t, now - Scores.DAY_MS)) return "Yesterday";
-        if (sameDay(t, now + Scores.DAY_MS)) return "Tomorrow";
-        return DateFormat.format("EEEE d MMMM", t).toString();
+        launch(new Intent(this, Sports.class));
     }
 
     // ---- apps ----
@@ -1302,7 +1103,7 @@ public final class Home extends Activity {
             // of empty margins gets breathing room; the tile colour is the banner's background.
             ImageView img = new ImageView(this);
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            boolean trimmed = app.art != null && app.art.getWidth() < 400 * 0.9f;
+            boolean trimmed = app.art != null && app.art.getWidth() < Apps.ART_W * 0.9f;
             if (app.art != null) img.setImageBitmap(app.art);
             else img.setImageDrawable(app.banner);
             if (trimmed) img.setPadding(dp(12), dp(9), dp(12), dp(9));

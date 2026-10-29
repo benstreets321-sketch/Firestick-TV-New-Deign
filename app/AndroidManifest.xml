@@ -40,6 +40,14 @@
             </intent-filter>
         </activity>
 
+        <!-- Football, F1, darts and pickleball. -->
+        <activity
+            android:name=".Sports"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|uiMode" />
+
         <!-- The screensaver: the aerial videos full screen with a clock. -->
         <service
             android:name=".Dream"

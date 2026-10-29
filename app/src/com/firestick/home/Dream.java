@@ -30,7 +30,7 @@ import java.util.List;
 public final class Dream extends DreamService {
     private VideoLayer video;
     private ImageView photo;
-    private View veil;
+    private ImageView veil;
     private TextView clock, date;
     private final BroadcastReceiver time = new BroadcastReceiver() {
         @Override
@@ -58,8 +58,7 @@ public final class Dream extends DreamService {
         photo.setScaleType(ImageView.ScaleType.CENTER_CROP);
         photo.setVisibility(View.GONE);
         root.addView(photo, match());
-        veil = new View(this);
-        veil.setBackgroundColor(Color.BLACK);
+        veil = new ImageView(this);
         root.addView(veil, match());
 
         LinearLayout corner = new LinearLayout(this);

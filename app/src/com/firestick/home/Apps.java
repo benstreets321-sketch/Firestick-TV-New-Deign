@@ -68,6 +68,12 @@ final class Apps {
         int color;
     }
 
+    /**
+     * Artwork is drawn at 640 x 360, well over twice the tile's size on screen (the Fire TV draws
+     * its interface at 1080p even on a 4K TV), so logos stay crisp when a tile is enlarged.
+     */
+    static final int ART_W = 640, ART_H = 360;
+
     private Apps() {}
 
     private static SharedPreferences prefs(Context c) {
@@ -105,7 +111,7 @@ final class Apps {
                 banner(a);
             } else {
                 a.color = edgeColor(a.icon, false);
-                a.art = trim(render(a.icon, 192, 192), Color.TRANSPARENT, 0.06f);
+                a.art = trim(render(a.icon, 288, 288), Color.TRANSPARENT, 0.06f);
             }
         }
         return apps;
@@ -164,7 +170,8 @@ final class Apps {
      * white play triangle in the middle, at banner size.
      */
     private static Bitmap playButton() {
-        int w = 400, h = 225;
+        int w = ART_W, h = ART_H;
+        float k = w / 400f;
         Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(b);
         Paint bg = new Paint();
@@ -176,7 +183,7 @@ final class Apps {
                 Shader.TileMode.CLAMP));
         c.drawRect(0, 0, w, h, glow);
 
-        float cx = w / 2f + 8, cy = h / 2f, r = 44;
+        float cx = w / 2f + 8 * k, cy = h / 2f, r = 44 * k;
         Path tri = new Path();
         tri.moveTo(cx - r * 0.75f, cy - r);
         tri.lineTo(cx + r, cy);
@@ -184,14 +191,14 @@ final class Apps {
         tri.close();
         Paint shadow = new Paint(Paint.ANTI_ALIAS_FLAG);
         shadow.setColor(0x40000000);
-        shadow.setPathEffect(new CornerPathEffect(14));
+        shadow.setPathEffect(new CornerPathEffect(14 * k));
         c.save();
-        c.translate(0, 5);
+        c.translate(0, 5 * k);
         c.drawPath(tri, shadow);
         c.restore();
         Paint white = new Paint(Paint.ANTI_ALIAS_FLAG);
         white.setColor(Color.WHITE);
-        white.setPathEffect(new CornerPathEffect(14));
+        white.setPathEffect(new CornerPathEffect(14 * k));
         c.drawPath(tri, white);
         return b;
     }
@@ -210,7 +217,7 @@ final class Apps {
      * logo, crops to it, and lets the tile's own colour (the banner's background) fill the rest.
      */
     private static void banner(App a) {
-        Bitmap full = render(a.banner, 400, 225);
+        Bitmap full = render(a.banner, ART_W, ART_H);
         int border = borderColor(full);
         a.color = Color.alpha(border) < 200 ? 0xFF2A2D33 : (border | 0xFF000000);
         a.art = trim(full, border, 0.08f);
