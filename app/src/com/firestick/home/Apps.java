@@ -41,6 +41,8 @@ final class Apps {
         CharSequence label;
         Intent intent;
         Drawable banner, icon;
+        /** The artwork to show, with empty margins trimmed off so the logo fills its tile. */
+        Bitmap art;
         /** The tile's colour, taken from the edges of the app's own artwork. */
         int color;
     }
@@ -73,7 +75,14 @@ final class Apps {
                 return collator.compare(a.label.toString(), b.label.toString());
             }
         });
-        for (App a : apps) a.color = edgeColor(a.banner != null ? a.banner : a.icon, a.banner != null);
+        for (App a : apps) {
+            if (a.banner != null) {
+                banner(a);
+            } else {
+                a.color = edgeColor(a.icon, false);
+                a.art = trim(render(a.icon, 192, 192), Color.TRANSPARENT, 0.06f);
+            }
+        }
         return apps;
     }
 
@@ -123,6 +132,87 @@ final class Apps {
 
     static void unhideAll(Context c) {
         prefs(c).edit().remove("hidden").apply();
+    }
+
+    private static Bitmap render(Drawable d, int w, int h) {
+        if (d == null) return null;
+        Bitmap b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+        d.setBounds(0, 0, w, h);
+        d.draw(new Canvas(b));
+        return b;
+    }
+
+    /**
+     * Some banners (BBC iPlayer, Channel 4 and others) draw a small logo in the middle of a
+     * plain or transparent banner, so they look shrunken next to the rest. This finds the
+     * logo, crops to it, and lets the tile's own colour (the banner's background) fill the rest.
+     */
+    private static void banner(App a) {
+        Bitmap full = render(a.banner, 400, 225);
+        int border = borderColor(full);
+        a.color = Color.alpha(border) < 200 ? 0xFF2A2D33 : (border | 0xFF000000);
+        a.art = trim(full, border, 0.08f);
+    }
+
+    /** The average colour of the outermost pixels; transparent when most of them are. */
+    private static int borderColor(Bitmap b) {
+        int w = b.getWidth(), h = b.getHeight();
+        int[] px = new int[w * h];
+        b.getPixels(px, 0, w, 0, 0, w, h);
+        long r = 0, g = 0, bl = 0;
+        int n = 0, all = 0;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                if (x > 2 && y > 2 && x < w - 3 && y < h - 3) continue;
+                all++;
+                int p = px[y * w + x];
+                if (Color.alpha(p) < 200) continue;
+                r += Color.red(p);
+                g += Color.green(p);
+                bl += Color.blue(p);
+                n++;
+            }
+        }
+        if (n < all / 2) return Color.TRANSPARENT;
+        return Color.rgb((int) (r / n), (int) (g / n), (int) (bl / n));
+    }
+
+    /**
+     * Crops to the pixels that differ from the background (or are not transparent), plus a
+     * margin, when that leaves the artwork clearly smaller than its canvas; else returns it whole.
+     */
+    static Bitmap trim(Bitmap b, int background, float margin) {
+        if (b == null) return null;
+        int w = b.getWidth(), h = b.getHeight();
+        int[] px = new int[w * h];
+        b.getPixels(px, 0, w, 0, 0, w, h);
+        boolean clear = Color.alpha(background) < 200;
+        int left = w, top = h, right = -1, bottom = -1;
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int p = px[y * w + x];
+                if (Color.alpha(p) < 60) continue;
+                if (!clear) {
+                    int d = Math.abs(Color.red(p) - Color.red(background))
+                            + Math.abs(Color.green(p) - Color.green(background))
+                            + Math.abs(Color.blue(p) - Color.blue(background));
+                    if (d < 60) continue;
+                }
+                if (x < left) left = x;
+                if (x > right) right = x;
+                if (y < top) top = y;
+                if (y > bottom) bottom = y;
+            }
+        }
+        if (right < 0) return b;
+        int cw = right - left + 1, ch = bottom - top + 1;
+        if (cw > w * 0.9f && ch > h * 0.9f) return b; // already fills its canvas
+        int m = Math.round(Math.max(cw, ch) * margin);
+        left = Math.max(0, left - m);
+        top = Math.max(0, top - m);
+        right = Math.min(w - 1, right + m);
+        bottom = Math.min(h - 1, bottom + m);
+        return Bitmap.createBitmap(b, left, top, right - left + 1, bottom - top + 1);
     }
 
     /**

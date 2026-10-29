@@ -81,9 +81,38 @@ public final class Home extends Activity {
 
     /** The tile being moved, or null. */
     private View moving;
-    private final Map<String, Integer> lastState = new HashMap<>();
-    private final Map<String, Long> endedAt = new HashMap<>();
     private final Map<String, String> lastScore = new HashMap<>();
+    /** The score card's pages (live, next, results), shown in turn when there is more than one. */
+    private final List<Page> pages = new ArrayList<>();
+    private int page;
+    private static final long PAGE_MS = 9000;
+    private static final int ROWS_PER_PAGE = 5;
+
+    private static final class Page {
+        final int kind;
+        final List<Scores.Match> matches = new ArrayList<>();
+        int number, of;
+
+        Page(int kind) {
+            this.kind = kind;
+        }
+    }
+
+    private final Runnable flip = new Runnable() {
+        @Override
+        public void run() {
+            if (pages.size() < 2) return;
+            page = (page + 1) % pages.size();
+            scoresCard.animate().alpha(0f).setDuration(250).withEndAction(new Runnable() {
+                @Override
+                public void run() {
+                    drawPage();
+                    scoresCard.animate().alpha(1f).setDuration(250).start();
+                }
+            }).start();
+            ui.postDelayed(this, PAGE_MS);
+        }
+    };
     private final Map<String, Bitmap> crests = java.util.Collections.synchronizedMap(new HashMap<String, Bitmap>());
 
     private final Runnable rotate = new Runnable() {
@@ -149,6 +178,8 @@ public final class Home extends Activity {
         ui.removeCallbacks(scores);
         if (lastScores == 0 || SystemClock.elapsedRealtime() - lastScores > SCORES_LIVE_MS) loadScores();
         else ui.postDelayed(scores, SCORES_LIVE_MS);
+        ui.removeCallbacks(flip);
+        if (pages.size() > 1) ui.postDelayed(flip, PAGE_MS);
     }
 
     @Override
@@ -163,6 +194,7 @@ public final class Home extends Activity {
         unregisterReceiver(time);
         ui.removeCallbacks(rotate);
         ui.removeCallbacks(scores);
+        ui.removeCallbacks(flip);
         if (moving != null) stopMoving();
         hideOptions();
         hideMenu();
@@ -585,7 +617,23 @@ public final class Home extends Activity {
         });
     }
 
+    /**
+     * Only the first app leads up to the menu button; Up anywhere else stays put. The menu
+     * button leads back down (or right) to the first app.
+     */
+    private void relink() {
+        for (int i = 0; i < row.getChildCount(); i++) {
+            View t = row.getChildAt(i);
+            t.setNextFocusUpId(i == 0 ? menuButton.getId() : t.getId());
+        }
+        if (row.getChildCount() > 0) {
+            menuButton.setNextFocusDownId(row.getChildAt(0).getId());
+            menuButton.setNextFocusRightId(row.getChildAt(0).getId());
+        }
+    }
+
     private void saveOrder() {
+        relink();
         List<String> pkgs = new ArrayList<>();
         for (int i = 0; i < row.getChildCount(); i++) pkgs.add(((Apps.App) row.getChildAt(i).getTag()).pkg);
         Apps.saveOrder(this, pkgs);
@@ -615,7 +663,7 @@ public final class Home extends Activity {
         scoresCard.setBackground(bg);
         scoresCard.setPadding(dp(16), dp(12), dp(16), dp(12));
         scoresCard.setVisibility(View.GONE);
-        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(392),
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(dp(420),
                 ViewGroup.LayoutParams.WRAP_CONTENT);
         sl.topMargin = dp(18);
         box.addView(scoresCard, sl);
@@ -643,21 +691,13 @@ public final class Home extends Activity {
             public void run() {
                 final List<Scores.Match> all = Scores.fetch(net);
                 final Map<String, Bitmap> fresh = new HashMap<>();
-                List<Scores.Match> picked = null;
+                Scores.Board board = null;
                 if (all != null) {
-                    long now = System.currentTimeMillis();
-                    synchronized (lastState) {
-                        for (Scores.Match m : all) {
-                            Integer before = lastState.get(m.id);
-                            if (m.state == Scores.DONE && before != null && before != Scores.DONE
-                                    && !endedAt.containsKey(m.id)) {
-                                endedAt.put(m.id, now);
-                            }
-                            lastState.put(m.id, m.state);
-                        }
-                        picked = Scores.relevant(all, endedAt, now);
-                    }
-                    for (Scores.Match m : picked) {
+                    board = Scores.relevant(all, System.currentTimeMillis());
+                    List<Scores.Match> shown = new ArrayList<>(board.live);
+                    shown.addAll(board.next.subList(0, Math.min(board.next.size(), 3 * ROWS_PER_PAGE)));
+                    shown.addAll(board.results.subList(0, Math.min(board.results.size(), 3 * ROWS_PER_PAGE)));
+                    for (Scores.Match m : shown) {
                         for (String url : new String[] {m.homeLogo, m.awayLogo}) {
                             if (url == null || url.isEmpty() || crests.containsKey(url) || fresh.containsKey(url)) continue;
                             Bitmap b = Scores.crest(app, url, crestPx);
@@ -665,7 +705,7 @@ public final class Home extends Activity {
                         }
                     }
                 }
-                final List<Scores.Match> show = picked;
+                final Scores.Board show = board;
                 ui.post(new Runnable() {
                     @Override
                     public void run() {
@@ -674,8 +714,8 @@ public final class Home extends Activity {
                         if (resumed) {
                             long now = System.currentTimeMillis();
                             long next = show == null ? SCORES_SOON_MS
-                                    : Scores.anyLive(show) ? SCORES_LIVE_MS
-                                    : Scores.anyImminent(show, now) ? SCORES_SOON_MS : SCORES_IDLE_MS;
+                                    : !show.live.isEmpty() ? SCORES_LIVE_MS
+                                    : Scores.anyImminent(show.next, now) ? SCORES_SOON_MS : SCORES_IDLE_MS;
                             ui.removeCallbacks(scores);
                             ui.postDelayed(scores, next);
                         }
@@ -685,57 +725,82 @@ public final class Home extends Activity {
         });
     }
 
-    private void showScores(List<Scores.Match> ms) {
-        scoresCard.removeAllViews();
-        if (ms.isEmpty()) {
+    private static final int LIVE_PAGE = 0, NEXT_PAGE = 1, RESULTS_PAGE = 2;
+
+    private void showScores(Scores.Board b) {
+        int kind = pages.isEmpty() ? -1 : pages.get(Math.min(page, pages.size() - 1)).kind;
+        pages.clear();
+        addPages(LIVE_PAGE, b.live, 2);
+        addPages(NEXT_PAGE, b.next, 3);
+        addPages(RESULTS_PAGE, b.results, 2);
+        ui.removeCallbacks(flip);
+        if (pages.isEmpty()) {
             scoresCard.setVisibility(View.GONE);
             return;
         }
-        int shown = 0;
-        String group = null;
-        for (Scores.Match m : ms) {
-            if (shown == 6) break;
-            String heading = m.competition + (m.state == Scores.LIVE ? "|live" : m.state == Scores.DONE ? "|ft" : "|soon");
-            if (!heading.equals(group)) {
-                group = heading;
-                scoresCard.addView(header(m, shown == 0));
+        // Stay on the same kind of page across a refresh instead of jumping back to the start.
+        page = 0;
+        for (int i = 0; i < pages.size(); i++) {
+            if (pages.get(i).kind == kind) {
+                page = i;
+                break;
             }
-            scoresCard.addView(scoreRow(m));
-            shown++;
         }
+        drawPage();
+        scoresCard.setAlpha(1f);
         scoresCard.setVisibility(View.VISIBLE);
+        if (pages.size() > 1 && resumed) ui.postDelayed(flip, PAGE_MS);
     }
 
-    private View header(Scores.Match m, boolean first) {
+    private void addPages(int kind, List<Scores.Match> ms, int maxPages) {
+        int count = Math.min(maxPages, (ms.size() + ROWS_PER_PAGE - 1) / ROWS_PER_PAGE);
+        for (int p = 0; p < count; p++) {
+            Page pg = new Page(kind);
+            pg.matches.addAll(ms.subList(p * ROWS_PER_PAGE, Math.min(ms.size(), (p + 1) * ROWS_PER_PAGE)));
+            pg.number = p + 1;
+            pg.of = count;
+            pages.add(pg);
+        }
+    }
+
+    private void drawPage() {
+        scoresCard.removeAllViews();
+        if (pages.isEmpty()) return;
+        Page pg = pages.get(page);
+        scoresCard.addView(header(pg));
+        for (Scores.Match m : pg.matches) scoresCard.addView(scoreRow(m));
+    }
+
+    private View header(Page pg) {
         LinearLayout h = new LinearLayout(this);
         h.setOrientation(LinearLayout.HORIZONTAL);
         h.setGravity(Gravity.CENTER_VERTICAL);
-        h.setPadding(0, first ? 0 : dp(10), 0, dp(4));
-        TextView name = text(11, "sans-serif-medium", Typeface.NORMAL);
-        name.setShadowLayer(0, 0, 0, 0);
-        name.setLetterSpacing(0.14f);
-        name.setTextColor(0xB3FFFFFF);
-        name.setText(m.competition.toUpperCase());
-        h.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        h.setPadding(0, 0, 0, dp(6));
         TextView tag = text(10, "sans-serif-medium", Typeface.BOLD);
         tag.setShadowLayer(0, 0, 0, 0);
-        tag.setLetterSpacing(0.1f);
-        tag.setPadding(dp(7), dp(3), dp(7), dp(3));
-        if (m.state == Scores.LIVE) {
-            tag.setText("● LIVE");
+        tag.setLetterSpacing(0.12f);
+        tag.setPadding(dp(8), dp(3), dp(8), dp(3));
+        if (pg.kind == LIVE_PAGE) {
+            tag.setText("\u25CF LIVE NOW");
             tag.setTextColor(Color.BLACK);
             tag.setBackground(rounded(GREEN, dp(8)));
             pulse(tag);
-        } else if (m.state == Scores.DONE) {
-            tag.setText("FULL TIME");
-            tag.setTextColor(0xCCFFFFFF);
-            tag.setBackground(rounded(0x33FFFFFF, dp(8)));
         } else {
-            tag.setText("STARTING SOON");
-            tag.setTextColor(0xCCFFFFFF);
+            tag.setText(pg.kind == NEXT_PAGE ? "COMING UP" : "RESULTS");
+            tag.setTextColor(Color.WHITE);
             tag.setBackground(rounded(0x33FFFFFF, dp(8)));
         }
         h.addView(tag, wrap());
+        View gap = new View(this);
+        h.addView(gap, new LinearLayout.LayoutParams(0, 1, 1));
+        // Dots: one per page, the current one bright.
+        for (int i = 0; i < pages.size(); i++) {
+            View dot = new View(this);
+            dot.setBackground(rounded(i == page ? Color.WHITE : 0x44FFFFFF, dp(3)));
+            LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(dp(i == page ? 14 : 6), dp(6));
+            dl.leftMargin = dp(4);
+            h.addView(dot, dl);
+        }
         return h;
     }
 
@@ -758,58 +823,69 @@ public final class Home extends Activity {
         LinearLayout r = new LinearLayout(this);
         r.setOrientation(LinearLayout.HORIZONTAL);
         r.setGravity(Gravity.CENTER_VERTICAL);
-        r.setPadding(0, dp(5), 0, dp(5));
+        r.setPadding(0, dp(4), 0, dp(4));
 
-        TextView home = team(m.home, Gravity.END);
-        r.addView(home, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        TextView comp = text(9, "sans-serif-medium", Typeface.BOLD);
+        comp.setShadowLayer(0, 0, 0, 0);
+        comp.setTextColor(0x99FFFFFF);
+        comp.setText(m.tag);
+        r.addView(comp, new LinearLayout.LayoutParams(dp(34), ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        r.addView(team(m.home, Gravity.END), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
         r.addView(crest(m.homeLogo, true));
 
-        TextView mid = text(15, "sans-serif-medium", Typeface.BOLD);
+        TextView mid = text(14, "sans-serif-medium", Typeface.BOLD);
         mid.setShadowLayer(0, 0, 0, 0);
         mid.setGravity(Gravity.CENTER);
-        mid.setPadding(0, dp(4), 0, dp(4));
+        mid.setPadding(0, dp(3), 0, dp(3));
         if (m.state == Scores.PRE) {
             mid.setText(DateFormat.format(DateFormat.is24HourFormat(this) ? "HH:mm" : "h:mm", m.kickoff));
             mid.setTypeface(Typeface.create("sans-serif", Typeface.NORMAL));
-            mid.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
             mid.setBackground(rounded(0x26FFFFFF, dp(8)));
         } else {
             mid.setText(m.homeScore + "  " + m.awayScore);
-            mid.setTextColor(m.state == Scores.LIVE ? Color.BLACK : Color.WHITE);
-            mid.setBackground(rounded(m.state == Scores.LIVE ? Color.WHITE : 0x33FFFFFF, dp(8)));
+            boolean live = m.state == Scores.LIVE;
+            mid.setTextColor(live ? Color.BLACK : Color.WHITE);
+            mid.setBackground(rounded(live ? Color.WHITE : 0x33FFFFFF, dp(8)));
             String score = m.homeScore + "-" + m.awayScore;
             String before = lastScore.put(m.id, score);
-            if (before != null && !before.equals(score)) goal(mid);
+            if (live && before != null && !before.equals(score)) goal(mid);
         }
-        LinearLayout.LayoutParams ml = new LinearLayout.LayoutParams(dp(62), ViewGroup.LayoutParams.WRAP_CONTENT);
-        ml.leftMargin = dp(8);
-        ml.rightMargin = dp(8);
+        LinearLayout.LayoutParams ml = new LinearLayout.LayoutParams(dp(58), ViewGroup.LayoutParams.WRAP_CONTENT);
+        ml.leftMargin = dp(7);
+        ml.rightMargin = dp(7);
         r.addView(mid, ml);
 
         r.addView(crest(m.awayLogo, false));
-        TextView away = team(m.away, Gravity.START);
-        r.addView(away, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        r.addView(team(m.away, Gravity.START), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        TextView status = text(12, "sans-serif-medium", Typeface.NORMAL);
+        TextView status = text(11, "sans-serif-medium", Typeface.NORMAL);
         status.setShadowLayer(0, 0, 0, 0);
         status.setGravity(Gravity.END);
+        status.setTextColor(0x99FFFFFF);
+        long now = System.currentTimeMillis();
         if (m.state == Scores.LIVE) {
             status.setText(m.detail);
             status.setTextColor(GREEN);
         } else if (m.state == Scores.DONE) {
-            status.setText("FT");
-            status.setTextColor(0x99FFFFFF);
+            status.setText(sameDay(m.kickoff, now) ? "FT" : "Yday");
         } else {
-            long mins = Math.max(0, (m.kickoff - System.currentTimeMillis()) / 60000);
-            status.setText(mins < 60 ? mins + "m" : (mins / 60) + "h " + (mins % 60) + "m");
-            status.setTextColor(0x99FFFFFF);
+            long mins = (m.kickoff - now) / 60000;
+            if (mins < 60) status.setText(Math.max(0, mins) + "m");
+            else if (sameDay(m.kickoff, now)) status.setText("Today");
+            else if (sameDay(m.kickoff, now + 24 * 60 * 60 * 1000L)) status.setText("Tmrw");
+            else status.setText(DateFormat.format("EEE", m.kickoff));
         }
-        r.addView(status, new LinearLayout.LayoutParams(dp(48), ViewGroup.LayoutParams.WRAP_CONTENT));
+        r.addView(status, new LinearLayout.LayoutParams(dp(40), ViewGroup.LayoutParams.WRAP_CONTENT));
         return r;
     }
 
+    private static boolean sameDay(long a, long b) {
+        return DateFormat.format("yyyyMMdd", a).toString().equals(DateFormat.format("yyyyMMdd", b).toString());
+    }
+
     private TextView team(String name, int gravity) {
-        TextView t = text(14, "sans-serif", Typeface.NORMAL);
+        TextView t = text(13, "sans-serif", Typeface.NORMAL);
         t.setShadowLayer(0, 0, 0, 0);
         t.setText(name);
         t.setGravity(gravity | Gravity.CENTER_VERTICAL);
@@ -823,10 +899,10 @@ public final class Home extends Activity {
         v.setScaleType(ImageView.ScaleType.FIT_CENTER);
         Bitmap b = url == null ? null : crests.get(url);
         if (b != null) v.setImageBitmap(b);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(b != null ? dp(22) : 0, dp(22));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(b != null ? dp(20) : 0, dp(20));
         if (b != null) {
-            if (home) lp.leftMargin = dp(8);
-            else lp.rightMargin = dp(8);
+            if (home) lp.leftMargin = dp(6);
+            else lp.rightMargin = dp(6);
         }
         v.setLayoutParams(lp);
         return v;
@@ -911,8 +987,7 @@ public final class Home extends Activity {
             if (a.pkg.equals(focused)) again = t;
         }
         if (row.getChildCount() == 0) return;
-        menuButton.setNextFocusDownId(row.getChildAt(0).getId());
-        menuButton.setNextFocusRightId(row.getChildAt(0).getId());
+        relink();
         if (again != null) again.requestFocus();
         else if (getCurrentFocus() == null || getCurrentFocus() == menuButton || f != null && f.getParent() == null) {
             focusFirstApp();
@@ -928,14 +1003,16 @@ public final class Home extends Activity {
         t.setBackground(rounded(app.color, dp(12)));
         final GradientDrawable ring = rounded(Color.TRANSPARENT, dp(12));
         t.setForeground(ring);
-        t.setNextFocusUpId(menuButton.getId());
 
         if (app.banner != null) {
-            // FIT_CENTER keeps the banner's own proportions; the tile colour comes from the
-            // banner's edges, so one that does not fill the tile still looks seamless.
+            // FIT_CENTER keeps the artwork's own proportions. A banner whose logo was trimmed out
+            // of empty margins gets breathing room; the tile colour is the banner's background.
             ImageView img = new ImageView(this);
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            img.setImageDrawable(app.banner);
+            boolean trimmed = app.art != null && app.art.getWidth() < 400 * 0.9f;
+            if (app.art != null) img.setImageBitmap(app.art);
+            else img.setImageDrawable(app.banner);
+            if (trimmed) img.setPadding(dp(18), dp(14), dp(18), dp(14));
             t.addView(img, match());
         } else {
             LinearLayout col = new LinearLayout(this);
@@ -943,8 +1020,9 @@ public final class Home extends Activity {
             col.setGravity(Gravity.CENTER);
             ImageView img = new ImageView(this);
             img.setScaleType(ImageView.ScaleType.FIT_CENTER);
-            img.setImageDrawable(app.icon);
-            col.addView(img, new LinearLayout.LayoutParams(dp(48), dp(48)));
+            if (app.art != null) img.setImageBitmap(app.art);
+            else img.setImageDrawable(app.icon);
+            col.addView(img, new LinearLayout.LayoutParams(dp(56), dp(56)));
             TextView name = text(12, "sans-serif-medium", Typeface.NORMAL);
             name.setText(app.label);
             name.setSingleLine(true);
@@ -968,6 +1046,15 @@ public final class Home extends Activity {
                 v.animate().scaleX(has ? 1.12f : 1f).scaleY(has ? 1.12f : 1f).setDuration(160)
                         .setInterpolator(new DecelerateInterpolator()).start();
                 if (has && moving == null) focusedName.setText(app.label);
+                if (has && row.indexOfChild(v) == 0) {
+                    // The first app: show the row's start fully, not just the tile itself.
+                    rowScroll.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            rowScroll.smoothScrollTo(0, 0);
+                        }
+                    });
+                }
             }
         });
         t.setOnClickListener(new View.OnClickListener() {

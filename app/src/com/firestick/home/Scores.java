@@ -26,33 +26,34 @@ final class Scores {
     private static final String TAG = "MyHome";
 
     /** ESPN's id for each competition, and the name shown on screen. Order = order on screen. */
+    /** ESPN's id, the name, and the short tag shown on each row. Order = priority on screen. */
     private static final String[][] COMPETITIONS = {
-        {"fifa.world", "World Cup"},
-        {"uefa.euro", "Euros"},
-        {"uefa.champions", "Champions League"},
-        {"eng.1", "Premier League"},
-        {"eng.fa", "FA Cup"},
-        {"eng.league_cup", "Carabao Cup"},
-        {"uefa.europa", "Europa League"},
-        {"uefa.europa.conf", "Conference League"},
-        {"uefa.nations", "Nations League"},
-        {"fifa.worldq.uefa", "World Cup Qualifiers"},
-        {"uefa.euroq", "Euro Qualifiers"},
-        {"eng.charity", "Community Shield"},
-        {"fifa.cwc", "Club World Cup"},
+        {"eng.1", "Premier League", "PL"},
+        {"uefa.champions", "Champions League", "UCL"},
+        {"fifa.world", "World Cup", "WC"},
+        {"uefa.euro", "Euros", "EURO"},
+        {"eng.fa", "FA Cup", "FA"},
+        {"eng.league_cup", "Carabao Cup", "EFL"},
+        {"uefa.europa", "Europa League", "UEL"},
+        {"uefa.europa.conf", "Conference League", "UECL"},
+        {"uefa.nations", "Nations League", "UNL"},
+        {"fifa.worldq.uefa", "World Cup Qualifiers", "WCQ"},
+        {"uefa.euroq", "Euro Qualifiers", "EQ"},
+        {"eng.charity", "Community Shield", "CS"},
+        {"fifa.cwc", "Club World Cup", "CWC"},
     };
 
-    /** Games starting within this long are "very soon" and shown. */
-    static final long SOON_MS = 3 * 60 * 60 * 1000L;
-    /** A finished game stays up this long, so the final whistle is not missed. */
-    static final long JUST_ENDED_MS = 20 * 60 * 1000L;
+    /** Fixtures this far ahead are shown. */
+    static final long AHEAD_MS = 48 * 60 * 60 * 1000L;
+    /** Results stay up this long after kick-off (about a day after the final whistle). */
+    static final long RESULTS_MS = 26 * 60 * 60 * 1000L;
 
     static final int PRE = 0, LIVE = 1, DONE = 2;
 
     static final class Match {
-        String id, competition, home, away, homeScore = "", awayScore = "", homeLogo, awayLogo, detail;
+        String id, competition, tag, home, away, homeScore = "", awayScore = "", homeLogo, awayLogo, detail;
         int state, order;
-        long kickoff, endedAt;
+        long kickoff;
     }
 
     private Scores() {}
@@ -61,12 +62,12 @@ final class Scores {
     static List<Match> fetch(ExecutorService pool) {
         List<Future<List<Match>>> jobs = new ArrayList<>();
         for (int i = 0; i < COMPETITIONS.length; i++) {
-            final String id = COMPETITIONS[i][0], name = COMPETITIONS[i][1];
+            final String id = COMPETITIONS[i][0], name = COMPETITIONS[i][1], tag = COMPETITIONS[i][2];
             final int order = i;
             jobs.add(pool.submit(new Callable<List<Match>>() {
                 @Override
                 public List<Match> call() throws Exception {
-                    return fetch(id, name, order);
+                    return fetch(id, name, tag, order);
                 }
             }));
         }
@@ -84,9 +85,21 @@ final class Scores {
         return out;
     }
 
-    private static List<Match> fetch(String league, String name, int order) throws Exception {
-        String url = "https://site.api.espn.com/apis/site/v2/sports/soccer/" + league + "/scoreboard";
-        JSONArray events = new JSONObject(Net.text(url)).optJSONArray("events");
+    private static List<Match> fetch(String league, String name, String tag, int order) throws Exception {
+        // Yesterday to three days ahead, in ESPN's date range form; the exact window is applied later.
+        SimpleDateFormat day = new SimpleDateFormat("yyyyMMdd", Locale.ROOT);
+        long now = System.currentTimeMillis();
+        String range = day.format(now - 36 * 60 * 60 * 1000L) + "-" + day.format(now + 72 * 60 * 60 * 1000L);
+        String url = "https://site.api.espn.com/apis/site/v2/sports/soccer/" + league
+                + "/scoreboard?limit=200&dates=" + range;
+        String body;
+        try {
+            body = Net.text(url);
+        } catch (Exception e) {
+            // Should the date range ever be refused, the plain feed still has today's games.
+            body = Net.text("https://site.api.espn.com/apis/site/v2/sports/soccer/" + league + "/scoreboard");
+        }
+        JSONArray events = new JSONObject(body).optJSONArray("events");
         List<Match> out = new ArrayList<>();
         if (events == null) return out;
         for (int i = 0; i < events.length(); i++) {
@@ -96,6 +109,7 @@ final class Scores {
             Match m = new Match();
             m.id = league + "/" + e.optString("id");
             m.competition = name;
+            m.tag = tag;
             m.order = order;
             m.kickoff = parse(e.optString("date"));
             String state = type.optString("state");
@@ -122,39 +136,41 @@ final class Scores {
         return out;
     }
 
-    /**
-     * Only what matters right now: games being played, games kicking off within
-     * {@link #SOON_MS}, and games that ended in the last {@link #JUST_ENDED_MS}. Live games
-     * first, then by competition, then by kick-off.
-     *
-     * @param endedAt when each game was first seen finished, kept by the caller across refreshes
-     */
-    static List<Match> relevant(List<Match> all, java.util.Map<String, Long> endedAt, long now) {
-        List<Match> out = new ArrayList<>();
+    /** Live games, kick-offs in the next {@link #AHEAD_MS} and results from the last day. */
+    static final class Board {
+        final List<Match> live = new ArrayList<>(), next = new ArrayList<>(), results = new ArrayList<>();
+    }
+
+    static Board relevant(List<Match> all, long now) {
+        Board b = new Board();
         for (Match m : all) {
-            if (m.state == LIVE) {
-                out.add(m);
-            } else if (m.state == PRE) {
-                if (m.kickoff > 0 && m.kickoff - now <= SOON_MS && now - m.kickoff < SOON_MS) out.add(m);
-            } else {
-                Long first = endedAt.get(m.id);
-                // A game already over at the first look (say, this morning's) is not news.
-                if (first == null) continue;
-                m.endedAt = first;
-                if (now - first <= JUST_ENDED_MS) out.add(m);
-            }
+            if (m.state == LIVE) b.live.add(m);
+            else if (m.state == PRE && m.kickoff > now - 60 * 60 * 1000L && m.kickoff - now <= AHEAD_MS) b.next.add(m);
+            else if (m.state == DONE && now - m.kickoff <= RESULTS_MS) b.results.add(m);
         }
-        Collections.sort(out, new Comparator<Match>() {
+        // Live: by competition, then kick-off. Next: soonest first. Results: latest first.
+        Collections.sort(b.live, new Comparator<Match>() {
             @Override
-            public int compare(Match a, Match b) {
-                int ra = a.state == LIVE ? 0 : a.state == DONE ? 1 : 2;
-                int rb = b.state == LIVE ? 0 : b.state == DONE ? 1 : 2;
-                if (ra != rb) return ra - rb;
-                if (a.order != b.order) return a.order - b.order;
-                return Long.compare(a.kickoff, b.kickoff);
+            public int compare(Match a, Match c) {
+                if (a.order != c.order) return a.order - c.order;
+                return Long.compare(a.kickoff, c.kickoff);
             }
         });
-        return out;
+        Collections.sort(b.next, new Comparator<Match>() {
+            @Override
+            public int compare(Match a, Match c) {
+                if (a.kickoff != c.kickoff) return Long.compare(a.kickoff, c.kickoff);
+                return a.order - c.order;
+            }
+        });
+        Collections.sort(b.results, new Comparator<Match>() {
+            @Override
+            public int compare(Match a, Match c) {
+                if (a.kickoff != c.kickoff) return Long.compare(c.kickoff, a.kickoff);
+                return a.order - c.order;
+            }
+        });
+        return b;
     }
 
     static boolean anyLive(List<Match> ms) {
