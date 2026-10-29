@@ -27,7 +27,7 @@ import android.util.Log;
 public final class Keeper extends Service {
     private static final String TAG = "MyHome";
     private static final String AMAZON_HOME = "com.amazon.tv.launcher.ui.HomeActivity_vNext";
-    private static final long POLL_MS = 250;
+    private static final long POLL_MS = 300;
     private static final long DEBOUNCE_MS = 1500;
 
     private static volatile boolean paused;

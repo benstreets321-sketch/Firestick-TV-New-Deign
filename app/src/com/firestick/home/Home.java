@@ -55,9 +55,14 @@ public class Home extends Activity {
     private static final long ROTATE_MS = 60_000;
     private static final long FADE_MS = 1800;
     private static final long WALLPAPER_REFRESH_MS = 6 * 60 * 60 * 1000L;
-    private static final long SCORES_LIVE_MS = 20_000;
-    private static final long SCORES_SOON_MS = 60_000;
-    private static final long SCORES_IDLE_MS = 5 * 60_000;
+    /**
+     * Light mode for older sticks (Fire OS 6): photos by default instead of video, no tile
+     * shadows, no looping animations, smaller photos, scores refreshed less often.
+     */
+    private static final boolean LIGHT = Keeper.legacy();
+    private static final long SCORES_LIVE_MS = LIGHT ? 45_000 : 20_000;
+    private static final long SCORES_SOON_MS = LIGHT ? 2 * 60_000 : 60_000;
+    private static final long SCORES_IDLE_MS = LIGHT ? 10 * 60_000 : 5 * 60_000;
     private static final int GREEN = 0xFF4ADE80;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -904,6 +909,7 @@ public class Home extends Activity {
     }
 
     private void pulse(final View v) {
+        if (LIGHT) return;
         v.animate().alpha(0.55f).setDuration(900).withEndAction(new Runnable() {
             @Override
             public void run() {
@@ -1157,7 +1163,7 @@ public class Home extends Activity {
             public void onFocusChange(View v, boolean has) {
                 if (v == moving) return;
                 ring.setStroke(has ? dp(3) : 0, Color.WHITE);
-                v.setElevation(has ? dp(10) : 0);
+                if (!LIGHT) v.setElevation(has ? dp(10) : 0);
                 v.animate().scaleX(has ? 1.15f : 1f).scaleY(has ? 1.15f : 1f).setDuration(160)
                         .setInterpolator(new DecelerateInterpolator()).start();
                 if (has && moving == null) focusedName.setText(app.label);
@@ -1253,7 +1259,7 @@ public class Home extends Activity {
         io.execute(new Runnable() {
             @Override
             public void run() {
-                final Bitmap b = decode(f, Math.max(w, 1280));
+                final Bitmap b = decode(f, LIGHT ? 1280 : Math.max(w, 1280));
                 ui.post(new Runnable() {
                     @Override
                     public void run() {

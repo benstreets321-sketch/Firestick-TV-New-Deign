@@ -45,7 +45,8 @@ final class VideoLayer implements SurfaceHolder.Callback {
 
     /** The owner's choice of background: 4K video, HD video or photos. */
     static String mode(Context c) {
-        return prefs(c).getString("background", HD);
+        // Older sticks start on photos, which keeps them smooth; the menu can still pick video.
+        return prefs(c).getString("background", Keeper.legacy() ? PHOTOS : HD);
     }
 
     static void setMode(Context c, String mode) {
