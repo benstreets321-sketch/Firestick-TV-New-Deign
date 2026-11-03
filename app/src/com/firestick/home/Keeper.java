@@ -116,6 +116,17 @@ public final class Keeper extends Service {
         long now = System.currentTimeMillis();
         String top = top(now);
         if (top == null) return;
+        if (Remap.shouldRedirect(this, top)) {
+            Intent smartTube = Remap.smartTube(this);
+            if (smartTube != null) {
+                try {
+                    startActivity(smartTube);
+                } catch (RuntimeException e) {
+                    Log.w(TAG, "keeper: could not open SmartTube", e);
+                }
+                return;
+            }
+        }
         if (!Guard.AMAZON.equals(top)) {
             if (!"com.android.systemui".equals(top) && !"android".equals(top)) paused = false;
             return;

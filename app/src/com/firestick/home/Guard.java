@@ -51,16 +51,20 @@ public final class Guard extends AccessibilityService {
     private final Runnable launch = new Runnable() {
         @Override
         public void run() {
-            home(Guard.this);
+            fire(Guard.this, target, 0);
         }
     };
+    /** What the pending launch opens: My Home, or SmartTube in place of Prime Video. */
+    private PendingIntent target;
+    /** SmartTube's package while a Prime Video button press is being redirected to it. */
+    private String redirecting;
     private View cover;
     private long lastLaunch;
     private boolean onAmazonHome;
     private final BroadcastReceiver screenOn = new BroadcastReceiver() {
         @Override
         public void onReceive(Context c, Intent i) {
-            if (!paused && onAmazonHome) launchWhenCovered();
+            if (!paused && onAmazonHome) launchWhenCovered(launch(Guard.this));
         }
     };
 
@@ -69,9 +73,13 @@ public final class Guard extends AccessibilityService {
     }
 
     private static void home(Context c, long delayMs) {
+        fire(c, launch(c), delayMs);
+    }
+
+    private static void fire(Context c, PendingIntent pi, long delayMs) {
+        if (pi == null) return;
         AlarmManager alarms = (AlarmManager) c.getSystemService(Context.ALARM_SERVICE);
-        alarms.setExact(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + delayMs,
-                launch(c));
+        alarms.setExact(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + delayMs, pi);
     }
 
     /** Drops a queued launch, so it cannot pull the user back after they opened an app. */
@@ -142,6 +150,19 @@ public final class Guard extends AccessibilityService {
         if (e.getEventType() != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return;
         CharSequence pkg = e.getPackageName(), cls = e.getClassName();
         if (pkg == null) return;
+        if (redirecting != null && redirecting.contentEquals(pkg)) {
+            redirecting = null;
+            uncover();
+        }
+        if (Remap.shouldRedirect(this, pkg.toString())) {
+            Intent smartTube = Remap.smartTube(this);
+            if (smartTube != null) {
+                redirecting = smartTube.getComponent().getPackageName();
+                launchWhenCovered(PendingIntent.getActivity(this, 2, smartTube,
+                        PendingIntent.FLAG_UPDATE_CURRENT));
+                return;
+            }
+        }
         if (!AMAZON.contentEquals(pkg)) {
             if ("com.android.systemui".contentEquals(pkg) || "android".contentEquals(pkg)) return;
             onAmazonHome = false;
@@ -154,20 +175,21 @@ public final class Guard extends AccessibilityService {
         long now = SystemClock.uptimeMillis();
         if (now - lastLaunch < REPEAT_MS) return;
         lastLaunch = now;
-        launchWhenCovered();
+        launchWhenCovered(launch(this));
     }
 
-    /** Shows the cover, then starts the launch once that window is visible to the window manager. */
-    private void launchWhenCovered() {
+    /** Shows the cover, then fires {@code pi} once that window is visible to the window manager. */
+    private void launchWhenCovered(final PendingIntent pi) {
         handler.removeCallbacks(launch);
+        target = pi;
         if (cover == null) {
-            home(this);
+            fire(this, pi, 0);
             return;
         }
         boolean shown = cover.getVisibility() == View.VISIBLE;
         cover();
         if (shown) {
-            home(this);
+            fire(this, pi, 0);
             return;
         }
         cover.getViewTreeObserver().addOnPreDrawListener(new ViewTreeObserver.OnPreDrawListener() {
@@ -175,7 +197,7 @@ public final class Guard extends AccessibilityService {
             public boolean onPreDraw() {
                 cover.getViewTreeObserver().removeOnPreDrawListener(this);
                 handler.removeCallbacks(launch);
-                home(Guard.this, SHOWN_DELAY_MS);
+                fire(Guard.this, pi, SHOWN_DELAY_MS);
                 return true;
             }
         });

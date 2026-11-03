@@ -442,6 +442,15 @@ public class Home extends Activity {
                 }
             }
         });
+        final TextView[] remapItem = new TextView[1];
+        remapItem[0] = item(menu, remapLabel(Remap.enabled(this)), new Runnable() {
+            @Override
+            public void run() {
+                boolean on = !Remap.enabled(Home.this);
+                Remap.setEnabled(Home.this, on);
+                remapItem[0].setText(remapLabel(on));
+            }
+        });
         item(menu, "Show hidden apps", new Runnable() {
             @Override
             public void run() {
@@ -574,7 +583,7 @@ public class Home extends Activity {
             @Override
             public void run() {
                 hideOptions();
-                launch(new Intent(app.intent));
+                openApp(app);
             }
         });
         item(optionsPanel, "Move", new Runnable() {
@@ -1181,7 +1190,7 @@ public class Home extends Activity {
         t.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                launch(new Intent(app.intent));
+                openApp(app);
             }
         });
         t.setOnLongClickListener(new View.OnLongClickListener() {
@@ -1204,6 +1213,16 @@ public class Home extends Activity {
         } else if (menuButton != null) {
             menuButton.requestFocus();
         }
+    }
+
+    /** Opens an app from its tile. Prime Video opened here is not redirected to SmartTube. */
+    private void openApp(Apps.App app) {
+        if (Remap.PRIME.contains(app.pkg)) Remap.allowPrime();
+        launch(new Intent(app.intent));
+    }
+
+    private static String remapLabel(boolean on) {
+        return on ? "Prime Video button: SmartTube" : "Prime Video button: Prime Video";
     }
 
     /**
