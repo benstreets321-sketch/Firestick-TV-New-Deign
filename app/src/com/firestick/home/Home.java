@@ -136,6 +136,13 @@ public class Home extends Activity {
         }
         build();
         setContentView(root);
+        // A soft tick on every move between tiles and menu items (see Ticker).
+        root.getViewTreeObserver().addOnGlobalFocusChangeListener(new android.view.ViewTreeObserver.OnGlobalFocusChangeListener() {
+            @Override
+            public void onGlobalFocusChanged(View oldFocus, View newFocus) {
+                if (oldFocus != null && newFocus != null && resumed) Ticker.tick(Home.this);
+            }
+        });
         IntentFilter pf = new IntentFilter();
         pf.addAction(Intent.ACTION_PACKAGE_ADDED);
         pf.addAction(Intent.ACTION_PACKAGE_REMOVED);
@@ -449,6 +456,16 @@ public class Home extends Activity {
                 boolean on = !Remap.enabled(Home.this);
                 Remap.setEnabled(Home.this, on);
                 remapItem[0].setText(remapLabel(on));
+            }
+        });
+        final TextView[] tickItem = new TextView[1];
+        tickItem[0] = item(menu, Ticker.enabled(this) ? "Click sounds: soft" : "Click sounds: off", new Runnable() {
+            @Override
+            public void run() {
+                boolean on = !Ticker.enabled(Home.this);
+                Ticker.setEnabled(Home.this, on);
+                tickItem[0].setText(on ? "Click sounds: soft" : "Click sounds: off");
+                Ticker.tick(Home.this);
             }
         });
         item(menu, "Show hidden apps", new Runnable() {
