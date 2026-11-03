@@ -21,7 +21,7 @@ final class Remap {
     static final Set<String> PRIME = new HashSet<>(Arrays.asList(
             "com.amazon.firebat", "com.amazon.avod", "com.amazon.amazonvideo.livingroom"));
 
-    private static String last = "";
+    private static boolean lastPrime;
     /** Prime Video was opened on purpose (from My Home) and may stay until another app opens. */
     private static boolean allowed;
 
@@ -45,10 +45,28 @@ final class Remap {
      * somewhere else, not on purpose, and SmartTube is installed: the caller then opens SmartTube.
      */
     static synchronized boolean shouldRedirect(Context c, String pkg) {
+        return shouldRedirect(c, pkg, null);
+    }
+
+    /**
+     * Prime Video is the app under any of its package names, or, on older Fire OS, the Prime
+     * Video page inside Amazon's own launcher (an activity of it with "prime" in its name).
+     */
+    static boolean isPrime(String pkg, String cls) {
+        if (PRIME.contains(pkg)) return true;
+        String p = pkg.toLowerCase(Locale.ROOT);
+        if (p.contains("firebat") || p.contains("avod") || p.contains("primevideo") || p.contains("amazonvideo")) {
+            return true;
+        }
+        return Guard.AMAZON.equals(pkg) && cls != null && cls.toLowerCase(Locale.ROOT).contains("prime");
+    }
+
+    static synchronized boolean shouldRedirect(Context c, String pkg, String cls) {
         if (pkg == null || "com.android.systemui".equals(pkg) || "android".equals(pkg)) return false;
-        boolean wasPrime = PRIME.contains(last);
-        last = pkg;
-        if (!PRIME.contains(pkg)) {
+        boolean prime = isPrime(pkg, cls);
+        boolean wasPrime = lastPrime;
+        lastPrime = prime;
+        if (!prime) {
             if (!pkg.equals(c.getPackageName())) allowed = false;
             return false;
         }

@@ -154,7 +154,7 @@ public final class Guard extends AccessibilityService {
             redirecting = null;
             uncover();
         }
-        if (Remap.shouldRedirect(this, pkg.toString())) {
+        if (Remap.shouldRedirect(this, pkg.toString(), cls == null ? null : cls.toString())) {
             Intent smartTube = Remap.smartTube(this);
             if (smartTube != null) {
                 redirecting = smartTube.getComponent().getPackageName();

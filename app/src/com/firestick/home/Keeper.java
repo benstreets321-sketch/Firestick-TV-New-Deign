@@ -122,7 +122,7 @@ public final class Keeper extends Service {
             lastSeen = seen;
             Log.i(TAG, "keeper: front " + seen);
         }
-        if (Remap.shouldRedirect(this, top)) {
+        if (Remap.shouldRedirect(this, top, topClass)) {
             Intent smartTube = Remap.smartTube(this);
             if (smartTube != null) {
                 // Through an alarm, like the Home button: system_server sends it, so the
