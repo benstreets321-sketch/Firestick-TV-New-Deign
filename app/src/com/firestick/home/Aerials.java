@@ -70,8 +70,27 @@ final class Aerials {
      * A video that has not played recently. Three times in four it matches the time of day
      * (bright scenes by day, sunsets in the evening, night shots late), so the room's mood fits.
      */
+    /** Narrows a pick, for example to clips already saved on the stick. */
+    interface Filter {
+        boolean ok(Video v);
+    }
+
     static synchronized Video next(Context c, boolean h264Only) {
-        List<Video> list = all(c);
+        return next(c, h264Only, null);
+    }
+
+    /**
+     * Like {@link #next(Context, boolean)}, but only among clips {@code filter} accepts; null when
+     * none does. A filtered pick is not remembered as played (it may only be a download).
+     */
+    static synchronized Video next(Context c, boolean h264Only, Filter filter) {
+        List<Video> list = new ArrayList<>(all(c));
+        if (filter != null) {
+            List<Video> kept = new ArrayList<>();
+            for (Video v : list) if (filter.ok(v)) kept.add(v);
+            if (kept.isEmpty()) return null;
+            list = kept;
+        }
         if (h264Only) {
             // Only clips with a separate H.264 version (Apple's) play on sticks without HEVC.
             List<Video> playable = new ArrayList<>();
@@ -97,8 +116,10 @@ final class Aerials {
             pool.addAll(list);
         }
         Video v = pool.get(random.nextInt(pool.size()));
-        recent.add(v);
-        if (recent.size() > 20) recent.removeFirst();
+        if (filter == null) {
+            recent.add(v);
+            if (recent.size() > 20) recent.removeFirst();
+        }
         return v;
     }
 }

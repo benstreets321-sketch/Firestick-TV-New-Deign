@@ -27,7 +27,7 @@ import android.util.Log;
 public final class Keeper extends Service {
     private static final String TAG = "MyHome";
     private static final String AMAZON_HOME = "com.amazon.tv.launcher.ui.HomeActivity_vNext";
-    private static final long POLL_MS = 300;
+    private static final long POLL_MS = 400;
     private static final long DEBOUNCE_MS = 1500;
 
     private static volatile boolean paused;
@@ -36,6 +36,7 @@ public final class Keeper extends Service {
     private UsageStatsManager usage;
     private long lastLaunch;
     private String topClass;
+    private String lastSeen;
 
     /** Lets Amazon's home stay on screen until the user opens another app. */
     static void pause() {
@@ -116,14 +117,20 @@ public final class Keeper extends Service {
         long now = System.currentTimeMillis();
         String top = top(now);
         if (top == null) return;
+        String seen = top + "/" + topClass;
+        if (!seen.equals(lastSeen)) {
+            lastSeen = seen;
+            Log.i(TAG, "keeper: front " + seen);
+        }
         if (Remap.shouldRedirect(this, top)) {
             Intent smartTube = Remap.smartTube(this);
             if (smartTube != null) {
-                try {
-                    startActivity(smartTube);
-                } catch (RuntimeException e) {
-                    Log.w(TAG, "keeper: could not open SmartTube", e);
-                }
+                // Through an alarm, like the Home button: system_server sends it, so the
+                // app-switch delay after a remote button press does not hold it back.
+                PendingIntent pi = PendingIntent.getActivity(this, 2, smartTube, PendingIntent.FLAG_UPDATE_CURRENT);
+                AlarmManager am = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+                am.setExact(AlarmManager.RTC, now, pi);
+                Log.i(TAG, "keeper: Prime Video button -> " + smartTube.getComponent().getPackageName());
                 return;
             }
         }

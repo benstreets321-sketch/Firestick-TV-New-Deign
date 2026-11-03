@@ -241,7 +241,18 @@ final class VideoLayer implements SurfaceHolder.Callback {
 
     private void play(Aerials.Video resume, final int position) {
         release();
-        final Aerials.Video v = resume != null ? resume : Aerials.next(context, !HEVC);
+        final boolean cacheable = !uhd || !HEVC;
+        Aerials.Video pick = resume;
+        if (pick == null && cacheable) {
+            // A clip already saved on the stick plays without any buffering.
+            pick = Aerials.next(context, !HEVC, new Aerials.Filter() {
+                @Override
+                public boolean ok(Aerials.Video c) {
+                    return AerialCache.ready(context, AerialCache.url(c, !HEVC));
+                }
+            });
+        }
+        final Aerials.Video v = pick != null ? pick : Aerials.next(context, !HEVC);
         if (v == null) {
             listener.onFailed();
             return;
@@ -250,7 +261,10 @@ final class VideoLayer implements SurfaceHolder.Callback {
         final MediaPlayer p = new MediaPlayer();
         player = p;
         try {
-            p.setDataSource(!HEVC ? v.h264 : uhd ? v.uhd : v.hd);
+            String url = !HEVC ? v.h264 : uhd ? v.uhd : v.hd;
+            java.io.File saved = cacheable ? AerialCache.file(context, url) : null;
+            final String source = saved != null && saved.isFile() ? saved.getPath() : url;
+            p.setDataSource(source);
             p.setDisplay(surface.getHolder());
             p.setVolume(0f, 0f);
             p.setOnPreparedListener(new MediaPlayer.OnPreparedListener() {
@@ -277,6 +291,8 @@ final class VideoLayer implements SurfaceHolder.Callback {
                             }
                         }, 250);
                         listener.onPlaying();
+                        // While this one plays, quietly save the next ones for smooth playback.
+                        if (cacheable) AerialCache.topUp(context, !HEVC, source);
                         ui.removeCallbacks(watch);
                         ui.postDelayed(watch, 1000);
                     }
